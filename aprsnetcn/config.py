@@ -81,6 +81,10 @@ ADMIN_PASSWORD = _text("ACN_ADMIN_PASSWORD", "")    # 空 = 控制台关闭
 MANAGER_SECRET = _text("ACN_MANAGER_SECRET", "")    # 空 = 名单同步接口关闭
 TOKEN_TTL = _int("ACN_TOKEN_TTL", 12 * 3600)
 API_RATE_MINUTE = _int("ACN_API_RATE_MINUTE", 120)  # 每 token 每分钟
+
+# 24 小时台站数据不对外公开：站点页与 /api/public/* 默认关，
+# 要对外服务得在 env 里写 ACN_PUBLIC_API=1。带 token 的 /api/v1/stations 不受影响。
+PUBLIC_API = _text("ACN_PUBLIC_API", "0") not in ("0", "false", "no", "off", "")
 # 公开台站页与它调的那两个接口不验 token，按来源 IP 限流
 PUBLIC_RATE_MINUTE = _int("ACN_PUBLIC_RATE_MINUTE", 60)
 

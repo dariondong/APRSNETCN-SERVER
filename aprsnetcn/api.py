@@ -281,7 +281,9 @@ def _handler_class(api):
                                         "proto": __version__})
 
         def _stations_page(self):
-            """公开的 24 小时台站页：地图 + 点选详情，不用 token 也不用登录。"""
+            """24 小时台站页：地图 + 点选详情。默认不对外，开了 PUBLIC_API 才服务。"""
+            if not config.PUBLIC_API:
+                return self._json(403, {"error": "not-public"})
             path = os.path.join(os.path.dirname(__file__), "stations.html")
             try:
                 with open(path, "r", encoding="utf-8") as handle:
@@ -335,6 +337,7 @@ def _handler_class(api):
                 "whitelist_max_age_hours": config.WHITELIST_MAX_AGE_HOURS,
                 "default_filter": "all",
                 "login_extensions": ["vers", "auth", "filter"],
+                "public_api": config.PUBLIC_API,
                 "filters": list(filters.KNOWN),
             })
 
@@ -395,8 +398,10 @@ def _handler_class(api):
                 "stations": rows,
             })
 
-        # ── 公开接口：台站页用的，两处都不验 token，按 IP 限流 ──
+        # ── 公开接口：台站页用的，两处都不验 token，按 IP 限流。默认不对外。──
         def _public_stations(self, query):
+            if not config.PUBLIC_API:
+                return self._json(403, {"error": "not-public"})
             if not api.public_ok(self.client_address[0]):
                 return self._json(429, {"error": "rate-limited"})
             params, error = _list_params(query, default_limit=5000)
@@ -413,6 +418,8 @@ def _handler_class(api):
             })
 
         def _public_station(self, call):
+            if not config.PUBLIC_API:
+                return self._json(403, {"error": "not-public"})
             if not api.public_ok(self.client_address[0]):
                 return self._json(429, {"error": "rate-limited"})
             data = api.store.station(call)
@@ -455,6 +462,7 @@ def _handler_class(api):
                     "whitelist_max_age_hours": config.WHITELIST_MAX_AGE_HOURS,
                     "admin_denied": api.admin_denied,
                     "default_filter": "all",
+                    "public_api": config.PUBLIC_API,
                     "archive": {"enabled": config.ARCHIVE_ENABLED,
                                 "hours": config.ARCHIVE_HOURS,
                                 "lines": api.store.archive_count()},

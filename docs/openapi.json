@@ -458,7 +458,7 @@
         "tags": [
           "public"
         ],
-        "summary": "24 小时台站，不用 token（按来源 IP 限流）",
+        "summary": "24 小时台站，不用 token（按来源 IP 限流，默认不对外）",
         "parameters": [
           {
             "name": "window",
@@ -510,6 +510,9 @@
               }
             }
           },
+          "403": {
+            "description": "台站数据没对外开（ACN_PUBLIC_API=0）"
+          },
           "429": {
             "description": "同一个 IP 请求太密"
           }
@@ -521,7 +524,7 @@
         "tags": [
           "public"
         ],
-        "summary": "单台站与 24 小时轨迹，不用 token",
+        "summary": "单台站与 24 小时轨迹，不用 token（默认不对外）",
         "parameters": [
           {
             "name": "call",
@@ -543,6 +546,9 @@
               }
             }
           },
+          "403": {
+            "description": "台站数据没对外开（ACN_PUBLIC_API=0）"
+          },
           "404": {
             "description": "24 小时里没有这台站"
           },
@@ -557,10 +563,13 @@
         "tags": [
           "public"
         ],
-        "summary": "台站页（地图上点选台站）",
+        "summary": "台站页（地图上点选台站，默认不对外）",
         "responses": {
           "200": {
             "description": "HTML 页面"
+          },
+          "403": {
+            "description": "台站数据没对外开（ACN_PUBLIC_API=0）"
           }
         }
       }

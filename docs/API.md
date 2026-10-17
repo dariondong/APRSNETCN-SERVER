@@ -80,25 +80,18 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   'http://8.138.199.11:8899/api/v1/stations/BG7LZQ-9'
 ```
 
-## 台站页
+## 台站页与公开接口
 
 ```
 GET /stations
-```
-
-一张世界地图，24 小时里的台站都画在上面，点一个点看这台站的详情与轨迹。
-不用账号也不用 token，浏览器直接打开。页面上那个「呼号前缀」只筛不查，
-刷新与自动刷新（每分钟）走的都是下面这两个公开接口。
-
-## 公开接口
-
-```
 GET /api/public/stations            同一份台站列表，参数与 /api/v1/stations 相同
 GET /api/public/stations/{call}     单台站与轨迹
 ```
 
-不验 token，按来源 IP 限流（默认每分钟 60 次）。给台站页和别的只读页面用，
-要写进正式客户端的还是带 token 的那两个。
+台站数据默认不对外。`ACN_PUBLIC_API=0`（默认）时这三条都回 `403 not-public`，
+打开之后才服务：`/stations` 是一张世界地图，点一个点看详情与轨迹，不用账号；
+两个 `/api/public/*` 不验 token，按来源 IP 限流（默认每分钟 60 次）。
+带 token 的 `/api/v1/stations` 不受这个开关影响。
 
 ## 不用鉴权的两个
 
@@ -106,7 +99,7 @@ GET /api/public/stations/{call}     单台站与轨迹
   草案 7.4 要求能监控白名单版本与同步时间，这条接口不需要鉴权就能看。
 - `GET /api/v1/version` 协议版本与服务端实际策略：`passcode_mode`、`src_policy`、`auth_mode`、
   `retention_hours`、`whitelist_max_age_hours`、`default_filter`（没带过滤器的连接收全部报文）、
-  `filters`（认得的过滤器前缀）。
+  `public_api`（台站数据是否对外）、`filters`（认得的过滤器前缀）。
 
 ## 管理接口
 
@@ -145,6 +138,7 @@ GET  /api/admin/archive?q=&dir=&limit=  存档，开了才有
 | 401 | `unauthorized` | 没带 token 或已过期 |
 | 401 | `bad-credentials` | 账号或密码不对 |
 | 403 | `not-authorized` | 名单里没有，或授权已过期、已暂停、已撤销；名单过期没同步时 `reason` 是 `whitelist-stale` |
+| 403 | `not-public` | 台站数据没对外开（`ACN_PUBLIC_API=0`）|
 | 404 | `not-found` | 台站不在 24 小时窗口里 |
 | 429 | `rate-limited` | 这个 IP 调公开接口太密（`/api/public/*`） |
 | 429 | `rate-limited` | 这个 token 请求太密 |

@@ -15,7 +15,7 @@
 - 最近 24 小时的台站位置，HTTP JSON 接口读，OpenAPI 3 描述见 `docs/openapi.json`。
 - 一张台站页 `/stations`：世界地图上画 24 小时里的台站，点一个点看详情与轨迹。
   不接地图瓦片，轮廓是 Natural Earth 110m 抽稀出来的（`aprsnetcn/coast.json`，
-  由 `tools/gen_coast.py` 生成）。
+  由 `tools/gen_coast.py` 生成）。台站数据默认不对外，`ACN_PUBLIC_API=1` 才开放。
 - 管理控制台：账号与名单、发布版本、审计日志、收发统计、在线连接（可以踢）、
   报文检索（最近的内存环，开了存档就查库）。
 

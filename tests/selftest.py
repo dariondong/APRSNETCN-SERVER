@@ -41,6 +41,7 @@ os.environ.update({
     "ACN_HTTP_PORT": str(HTTP_PORT),
     "ACN_ADMIN_PASSWORD": "test-admin",
     "ACN_MANAGER_SECRET": "manager-secret",
+    "ACN_PUBLIC_API": "1",
     "ACN_RETENTION_HOURS": "24",
     "ACN_INGEST_ENABLED": "1",
     "ACN_INGEST_HOST": "127.0.0.1",
@@ -286,6 +287,23 @@ def test_end_to_end():
         timeout=5).read().decode("utf-8"))
     ok("世界轮廓随页发出", len(coast.get("rings") or []) > 10,
        len(coast.get("rings") or []))
+
+    # ⑨.6 台站数据默认不对外：开关关掉就只回 403
+    config.PUBLIC_API = False
+    try:
+        for path in ("/stations", "/api/public/stations?limit=1",
+                     "/api/public/stations/BG7LZQ"):
+            status, body = api_call(path)
+            ok("不对外时 %s 回 403" % path.split("?")[0],
+               status == 403 and body.get("error") == "not-public", status)
+        status, data = api_call("/api/v1/stations?limit=1", token=token)
+        ok("不对外时带 token 的台站接口照常", status == 200 and data.get("count") >= 1,
+           status)
+        status, ver = api_call("/api/v1/version")
+        ok("版本接口报出 public_api 关", ver.get("public_api") is False,
+           ver.get("public_api"))
+    finally:
+        config.PUBLIC_API = True
 
     # ⑩ 管理接口
     status, state_body = api_call("/api/admin/state", admin="test-admin")
