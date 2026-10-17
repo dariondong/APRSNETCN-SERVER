@@ -1,0 +1,17 @@
+[Unit]
+Description=APRSNETCN SERVER (APRS access, forwarding, 24h station API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/APRSNETCN-SERVER
+EnvironmentFile=/etc/aprsnetcn.env
+ExecStart=/usr/bin/python3 /opt/APRSNETCN-SERVER/run.py
+Restart=always
+RestartSec=3
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

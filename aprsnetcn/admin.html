@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APRSNETCN SERVER 管理</title>
+<style>
+:root { --ink:#15181c; --grey:#5d646d; --line:#d5d2ca; --bg:#f2f0ea; --hot:#b3141f; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink);
+  font:14px/1.6 Helvetica,"PingFang SC","Microsoft YaHei",sans-serif; }
+main { max-width:960px; margin:0 auto; padding:24px 18px 64px; }
+h1 { font-size:20px; margin:0 0 4px; letter-spacing:.02em; }
+p.lead { margin:0 0 20px; color:var(--grey); }
+h2 { font-size:14px; margin:28px 0 10px; padding-bottom:6px; border-bottom:1px solid var(--line);
+  letter-spacing:.08em; text-transform:uppercase; color:var(--grey); }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { color:var(--grey); font-weight:400; }
+input, select, textarea, button {
+  font:inherit; color:inherit; background:transparent;
+  border:1px solid var(--line); padding:6px 8px; border-radius:0; }
+input:focus, select:focus, textarea:focus, button:focus { outline:2px solid var(--ink); outline-offset:-1px; }
+button { cursor:pointer; }
+button.primary { background:var(--ink); color:var(--bg); border-color:var(--ink); }
+button.danger { color:var(--hot); border-color:var(--hot); }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+.row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+.mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+.note { color:var(--grey); font-size:12px; }
+.ok { color:#1c6b3a; } .bad { color:var(--hot); }
+#log { max-height:280px; overflow:auto; }
+.tag { display:inline-block; padding:1px 6px; border:1px solid var(--line); font-size:11.5px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>APRSNETCN SERVER 管理</h1>
+  <p class="lead">账号与名单在这里维护，SERVER 按本地名单放行。改完点「发布名单」把版本号往前推。</p>
+
+  <div id="loginBox">
+    <h2>登录</h2>
+    <div class="row">
+      <input id="pw" type="password" placeholder="管理口令" autocomplete="current-password">
+      <button class="primary" id="loginBtn" type="button">进入</button>
+      <span class="note" id="loginNote"></span>
+    </div>
+  </div>
+
+  <div id="panel" hidden>
+    <h2>运行状态</h2>
+    <div id="stats" class="grid"></div>
+
+    <h2>账号与名单</h2>
+    <table>
+      <thead><tr><th>呼号</th><th>账号</th><th>状态</th><th>有效期</th><th>口令</th><th></th></tr></thead>
+      <tbody id="accounts"></tbody>
+    </table>
+
+    <h2>新增 / 修改</h2>
+    <div class="grid">
+      <input id="fCall" placeholder="呼号，例如 BG7LZQ">
+      <input id="fAccount" placeholder="账号，例如 bg7lzq">
+      <input id="fPassword" placeholder="密码，留空不改" autocomplete="new-password">
+      <select id="fStatus">
+        <option value="authorized">authorized 已授权</option>
+        <option value="pending">pending 待审核</option>
+        <option value="suspended">suspended 已暂停</option>
+        <option value="revoked">revoked 已撤销</option>
+        <option value="expired">expired 已过期</option>
+      </select>
+      <input id="fFrom" placeholder="生效 2026-10-18T00:00:00+08:00">
+      <input id="fTo" placeholder="失效 留空长期">
+      <input id="fNote" placeholder="备注">
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" id="saveBtn" type="button">保存这一条</button>
+      <button id="publishBtn" type="button">发布名单</button>
+      <span class="note" id="saveNote"></span>
+    </div>
+
+    <h2>审计</h2>
+    <div id="log"><table><tbody id="audits"></tbody></table></div>
+
+    <h2>接口</h2>
+    <p class="note mono" id="apis"></p>
+  </div>
+</main>
+<script>
+(function () {
+  var token = sessionStorage.getItem('acnAdmin') || '';
+  var state = { accounts: [] };
+
+  function el(id) { return document.getElementById(id); }
+
+  function call(path, options) {
+    options = options || {};
+    options.headers = Object.assign({
+      'X-ACN-Token': token,
+      'Content-Type': 'application/json'
+    }, options.headers || {});
+    return fetch(path, options).then(function (res) {
+      return res.json().then(function (body) {
+        if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
+        return body;
+      });
+    });
+  }
+
+  function paintStats(stats, meta) {
+    var rows = [
+      ['当前连接', stats.connections],
+      ['累计登录', stats.logins_ok],
+      ['登录失败', stats.logins_failed],
+      ['收报文', stats.packets_in],
+      ['发报文', stats.packets_out],
+      ['24h 台站', meta.station_count],
+      ['名单版本', meta.whitelist_version],
+      ['端口', (stats.ports || []).join(' / ')]
+    ];
+    var html = '';
+    rows.forEach(function (row) {
+      html += '<div><div class="note">' + row[0] + '</div><div class="mono">' +
+        String(row[1]) + '</div></div>';
+    });
+    el('stats').innerHTML = html;
+    el('apis').textContent = [
+      'GET  /api/v1/health',
+      'POST /api/v1/login      {"account":"…","password":"…"}',
+      'GET  /api/v1/stations   ?window=24h&bbox=minlat,minlon,maxlat,maxlon&limit=500',
+      'GET  /api/v1/stations/{call}',
+      'GET  /api/v1/openapi.json'
+    ].join('\n');
+  }
+
+  function paintAccounts(accounts) {
+    state.accounts = accounts;
+    var html = '';
+    accounts.forEach(function (row) {
+      html += '<tr>' +
+        '<td class="mono">' + row.call + '</td>' +
+        '<td class="mono">' + (row.account || '') + '</td>' +
+        '<td><span class="tag">' + (row.effective || row.status) + '</span></td>' +
+        '<td class="mono">' + (row.valid_from || '—') + ' → ' + (row.valid_to || '长期') + '</td>' +
+        '<td class="note">' + (row.pass_hash ? '已设' : '未设') + '</td>' +
+        '<td><button class="danger" data-del="' + row.call + '" type="button">删除</button></td>' +
+        '</tr>';
+    });
+    el('accounts').innerHTML = html || '<tr><td colspan="6" class="note">还没有账号</td></tr>';
+  }
+
+  function paintAudits(audits) {
+    var html = '';
+    audits.forEach(function (row) {
+      html += '<tr><td class="mono">' + row.time + '</td><td>' + row.kind +
+        '</td><td class="note mono">' + JSON.stringify(row.detail) + '</td></tr>';
+    });
+    el('audits').innerHTML = html;
+  }
+
+  function refresh() {
+    call('/api/admin/state').then(function (body) {
+      paintStats(body.stats, body.meta);
+      paintAccounts(body.accounts);
+      paintAudits(body.audits);
+      el('loginBox').hidden = true;
+      el('panel').hidden = false;
+    }).catch(function (error) {
+      el('loginBox').hidden = false;
+      el('panel').hidden = true;
+      el('loginNote').textContent = error.message;
+    });
+  }
+
+  el('loginBtn').addEventListener('click', function () {
+    token = el('pw').value.trim();
+    sessionStorage.setItem('acnAdmin', token);
+    refresh();
+  });
+
+  el('saveBtn').addEventListener('click', function () {
+    var payload = {
+      call: el('fCall').value.trim(),
+      account: el('fAccount').value.trim(),
+      status: el('fStatus').value,
+      valid_from: el('fFrom').value.trim() || null,
+      valid_to: el('fTo').value.trim() || null,
+      note: el('fNote').value.trim() || null
+    };
+    if (el('fPassword').value) payload.password = el('fPassword').value;
+    call('/api/admin/account', { method: 'POST', body: JSON.stringify(payload) })
+      .then(function (body) {
+        el('saveNote').textContent = '已保存，名单版本 ' + body.version;
+        el('fPassword').value = '';
+        refresh();
+      }).catch(function (error) {
+        el('saveNote').textContent = '保存失败：' + error.message;
+      });
+  });
+
+  el('publishBtn').addEventListener('click', function () {
+    call('/api/admin/publish', { method: 'POST', body: '{}' }).then(function (body) {
+      el('saveNote').textContent = '已发布，名单版本 ' + body.version;
+      refresh();
+    });
+  });
+
+  el('accounts').addEventListener('click', function (event) {
+    var call_ = event.target.getAttribute && event.target.getAttribute('data-del');
+    if (!call_) return;
+    if (!window.confirm('删除 ' + call_ + ' ？')) return;
+    call('/api/admin/account/delete', { method: 'POST', body: JSON.stringify({ call: call_ }) })
+      .then(refresh);
+  });
+
+  if (token) refresh();
+})();
+</script>
+</body>
+</html>
