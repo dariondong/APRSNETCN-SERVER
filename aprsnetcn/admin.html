@@ -83,6 +83,7 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       <button class="primary" id="qBtn" type="button">查</button>
       <span class="note" id="qNote"></span>
     </div>
+    <p class="note">内存环只记客户端进出的报文，从外部拉来的只进 24 小时台站库。</p>
     <div class="tall"><table>
       <thead><tr><th>时间</th><th>方向</th><th>源</th><th>收件人</th><th>报文</th></tr></thead>
       <tbody id="packets"></tbody>
@@ -172,6 +173,10 @@ button.danger { color:var(--hot); border-color:var(--hot); }
     ];
     var archive = meta.archive || {};
     rows.push(['报文存档', archive.enabled ? (archive.lines + ' 行 / ' + archive.hours + ' 小时')
+      : '关']);
+    var ingest = meta.ingest || {};
+    rows.push(['外部拉取', ingest.enabled
+      ? (ingest.connected ? (ingest.lines + ' 行 / 入库 ' + ingest.stored) : '已断开')
       : '关']);
     var html = '';
     rows.forEach(function (row) {
