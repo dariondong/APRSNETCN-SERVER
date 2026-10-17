@@ -86,6 +86,9 @@ def test_parse():
     pkt = aprslib.parse("BG7LZQ>APRS:}BG6TA>APRS,TCPIP,BG7LZQ*:!3954.00N/11623.00E>")
     ok("第三方报文取内层源", pkt and pkt.src == "BG6TA")
     ok("拆不开的行返回 None", aprslib.parse("garbage") is None)
+    ok("带字母 SSID 的呼号认", aprslib.parse("BI1QKA-B>APCHP0:!3954.00N/11623.00E>x") is not None)
+    text, error = aprslib.clean_line("BG6TA>APRS:!3954.00N/11623.00E>x 云南", 512)
+    ok("注释里的中文不丢", text is not None and "云南" in text, error)
 
 
 def test_filters():

@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import re
 
-CALL_RE = re.compile(r"^[A-Za-z0-9]{1,9}(?:-\d{1,2})?$")
+CALL_RE = re.compile(r"^[A-Za-z0-9]{1,9}(?:-[A-Za-z0-9]{1,2})?$")
 # 报文类型（t/ 过滤器里的那一个字母）
 TYPE_OF_DTI = {
     "!": "p", "=": "p", "/": "p", "@": "p",
@@ -18,7 +18,6 @@ TYPE_OF_DTI = {
     "<": "c", "&": "c", "}": "x", "#": "r", "*": "r", "$": "r",
 }
 PRINTABLE = set(chr(c) for c in range(0x20, 0x7F))
-
 
 def valid_call(text):
     return bool(text) and bool(CALL_RE.match(text))
@@ -63,7 +62,7 @@ def clean_line(line, max_len):
     if len(line) > max_len:
         return None, "too-long"
     for ch in line:
-        if ch not in PRINTABLE:
+        if ch < " " or ch == "\x7f":                 # 注释里常带中文，不按 ASCII 卡
             return None, "bad-char"
     return line, None
 
