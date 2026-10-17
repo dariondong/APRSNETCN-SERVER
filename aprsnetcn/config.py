@@ -70,6 +70,8 @@ ADMIN_PASSWORD = _text("ACN_ADMIN_PASSWORD", "")    # 空 = 控制台关闭
 MANAGER_SECRET = _text("ACN_MANAGER_SECRET", "")    # 空 = 名单同步接口关闭
 TOKEN_TTL = _int("ACN_TOKEN_TTL", 12 * 3600)
 API_RATE_MINUTE = _int("ACN_API_RATE_MINUTE", 120)  # 每 token 每分钟
+# 公开台站页与它调的那两个接口不验 token，按来源 IP 限流
+PUBLIC_RATE_MINUTE = _int("ACN_PUBLIC_RATE_MINUTE", 60)
 
 # ── 外部数据：只读地拉一份 APRS-IS 的报文，补进 24 小时台站 ──
 # 草案 8.2：引入外部数据要明确来源与规则，所以默认关，打开时必须写清过滤器。

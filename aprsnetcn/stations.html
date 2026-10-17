@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APRSNETCN 24 小时台站</title>
+<style>
+  :root {
+    --paper: #f6f5f1;
+    --sea: #f1f1ed;
+    --land: #e2ded2;
+    --coast: #b7b1a2;
+    --grid: rgba(31, 36, 41, .09);
+    --ink: #1f2429;
+    --grey: #6c737b;
+    --line: #ddd9d0;
+    --hot: #b3141f;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 14px/1.5 Helvetica, "Helvetica Neue", Arial, "Microsoft YaHei", sans-serif;
+    overflow: hidden;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    padding: 12px 16px; border-bottom: 1px solid var(--line);
+  }
+  h1 { margin: 0; font-size: 16px; letter-spacing: .02em; }
+  .sub { color: var(--grey); font-size: 12px; }
+  .spacer { flex: 1 1 auto; }
+  .tools { display: flex; align-items: center; gap: 8px; }
+  input[type=search] {
+    width: 130px; padding: 5px 8px; font: inherit; font-size: 12px;
+    color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 0;
+  }
+  input[type=search]:focus { outline: 1px solid var(--hot); border-color: var(--hot); }
+  button {
+    font: inherit; font-size: 12px; padding: 5px 9px; background: #fff;
+    color: var(--ink); border: 1px solid var(--line); border-radius: 0; cursor: pointer;
+  }
+  button:hover { border-color: var(--ink); }
+  main { position: relative; height: calc(100% - 49px); }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+  canvas.dragging { cursor: grabbing; }
+  .legend {
+    position: absolute; left: 12px; bottom: 12px; display: flex; gap: 12px;
+    padding: 6px 10px; background: rgba(246, 245, 241, .92);
+    border: 1px solid var(--line); font-size: 11px; color: var(--grey);
+  }
+  .legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--ink); margin-right: 5px; vertical-align: middle; }
+  .legend .a i { opacity: 1; } .legend .b i { opacity: .55; } .legend .c i { opacity: .25; }
+  .zoom { position: absolute; right: 12px; top: 12px; display: flex; flex-direction: column; }
+  .zoom button { width: 30px; height: 28px; font-size: 15px; line-height: 1; }
+  .zoom button + button { border-top: none; }
+  .panel {
+    position: absolute; right: 12px; bottom: 12px; width: 268px; max-height: calc(100% - 24px);
+    overflow: auto; padding: 12px 14px; background: rgba(246, 245, 241, .97);
+    border: 1px solid var(--line); display: none;
+  }
+  .panel.on { display: block; }
+  .panel h2 { margin: 0; font-size: 15px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .panel .close { position: absolute; right: 8px; top: 6px; border: none; background: none;
+    font-size: 16px; padding: 2px 6px; color: var(--grey); }
+  .panel dl { margin: 10px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
+  .panel dt { color: var(--grey); font-size: 12px; }
+  .panel dd { margin: 0; font-size: 12px; word-break: break-all; }
+  .panel .note { margin-top: 10px; font-size: 12px; color: var(--grey); }
+  .state {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    color: var(--grey); font-size: 13px; text-align: center; pointer-events: none;
+  }
+  @media (max-width: 620px) {
+    header { padding: 10px 12px; }
+    h1 { font-size: 15px; }
+    .sub { width: 100%; }
+    input[type=search] { width: 96px; }
+    .panel { left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 52%; }
+    .legend { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>APRSNETCN 24 小时台站</h1>
+  <span class="sub" id="count">正在读台站…</span>
+  <span class="spacer"></span>
+  <div class="tools">
+    <input type="search" id="q" placeholder="呼号前缀" autocomplete="off" spellcheck="false">
+    <button type="button" id="reload">刷新</button>
+  </div>
+</header>
+<main>
+  <canvas id="map"></canvas>
+  <div class="zoom">
+    <button type="button" id="zin" title="放大">+</button>
+    <button type="button" id="zout" title="缩小">−</button>
+  </div>
+  <div class="legend">
+    <span class="a"><i></i>30 分钟内</span>
+    <span class="b"><i></i>3 小时内</span>
+    <span class="c"><i></i>更早</span>
+  </div>
+  <div class="panel" id="panel">
+    <button type="button" class="close" id="pclose" title="关闭">×</button>
+    <h2 id="pcall">—</h2>
+    <dl id="pfields"></dl>
+    <div class="note" id="pnote"></div>
+  </div>
+  <div class="state" id="state">正在读台站…</div>
+</main>
+<script>
+(function () {
+  var canvas = document.getElementById('map');
+  var ctx = canvas.getContext('2d');
+  var panel = document.getElementById('panel');
+  var stateEl = document.getElementById('state');
+  var countEl = document.getElementById('count');
+  var qEl = document.getElementById('q');
+
+  var coast = [];
+  var stations = [];
+  var track = null;
+  var picked = null;
+  var filter = '';
+
+  // 视角：经度、纬度、世界宽度的像素数
+  var view = { lon: 107, lat: 33, z: 0 };
+  var size = { w: 0, h: 0, dpr: 1 };
+  var drag = null;
+
+  function project(lon, lat) {
+    var x = (lon + 180) / 360;
+    var s = Math.sin(Math.max(-85, Math.min(85, lat)) * Math.PI / 180);
+    var y = 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
+    return [x, y];
+  }
+
+  function unproject(x, y) {
+    var lon = x * 360 - 180;
+    var n = Math.PI * (1 - 2 * y);
+    var lat = 180 / Math.PI * Math.atan((Math.exp(n) - Math.exp(-n)) / 2);
+    return [lon, lat];
+  }
+
+  function screenOf(lon, lat) {
+    var p = project(lon, lat);
+    var c = project(view.lon, view.lat);
+    return [(p[0] - c[0]) * view.z + size.w / 2, (p[1] - c[1]) * view.z + size.h / 2];
+  }
+
+  function resize() {
+    size.dpr = window.devicePixelRatio || 1;
+    size.w = canvas.clientWidth;
+    size.h = canvas.clientHeight;
+    canvas.width = Math.round(size.w * size.dpr);
+    canvas.height = Math.round(size.h * size.dpr);
+    ctx.setTransform(size.dpr, 0, 0, size.dpr, 0, 0);
+    // 视野里放 60 度经度：手机上看得清一个省，桌面上看得清半个亚洲
+    if (!view.z) view.z = size.w * 6;
+    clampView();
+    draw();
+  }
+
+  function clampView() {
+    var floor = Math.max(size.w, size.h) * 0.9;
+    view.z = Math.max(floor, Math.min(400000, view.z));
+    view.lat = Math.max(-72, Math.min(78, view.lat));
+    view.lon = Math.max(-180, Math.min(180, view.lon));
+  }
+
+  function ageOf(st) {
+    var t = Date.parse(st.last_seen || '');
+    if (isNaN(t)) return 1e9;
+    return (Date.now() - t) / 1000;
+  }
+
+  function alphaOf(age) {
+    if (age <= 1800) return 1;
+    if (age <= 10800) return 0.55;
+    return 0.25;
+  }
+
+  // 世界在横向上是首尾相接的：拉过边界就把同一份数据再画一遍，画布上不会出现空白
+  function wrapOffsets() { return [-view.z, 0, view.z]; }
+
+  function screenX(lon, off) {
+    var p = project(lon, view.lat);
+    var c = project(view.lon, view.lat);
+    return (p[0] - c[0]) * view.z + size.w / 2 + off;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, size.w, size.h);
+    ctx.fillStyle = '#f1f1ed';
+    ctx.fillRect(0, 0, size.w, size.h);
+
+    var offs = wrapOffsets();
+    var o, i, j;
+
+    // 底图：陆地多边形
+    ctx.fillStyle = '#e2ded2';
+    ctx.strokeStyle = '#b7b1a2';
+    ctx.lineWidth = 0.7;
+    for (o = 0; o < offs.length; o++) {
+      for (var r = 0; r < coast.length; r++) {
+        var ring = coast[r];
+        ctx.beginPath();
+        for (i = 0; i < ring.length; i += 2) {
+          var px = screenX(ring[i], offs[o]);
+          var py = screenOf(ring[i], ring[i + 1])[1];
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
+    // 经纬网
+    ctx.strokeStyle = 'rgba(31,36,41,0.09)';
+    ctx.lineWidth = 0.6;
+    var step = view.z > 20000 ? 1 : (view.z > 7000 ? 5 : 10);
+    for (o = 0; o < offs.length; o++) {
+      for (var lon = -180; lon <= 180; lon += step) {
+        var lx = screenX(lon, offs[o]);
+        if (lx < -1 || lx > size.w + 1) continue;
+        ctx.beginPath();
+        ctx.moveTo(lx, screenOf(lon, -85)[1]);
+        ctx.lineTo(lx, screenOf(lon, 85)[1]);
+        ctx.stroke();
+      }
+    }
+    for (var lat = -80; lat <= 80; lat += step) {
+      var ly = screenOf(0, lat)[1];
+      if (ly < -1 || ly > size.h + 1) continue;
+      ctx.beginPath();
+      ctx.moveTo(0, ly);
+      ctx.lineTo(size.w, ly);
+      ctx.stroke();
+    }
+
+    // 轨迹（选中的那一台）
+    if (track && track.track && track.track.length > 1) {
+      ctx.strokeStyle = '#b3141f';
+      ctx.lineWidth = 1.2;
+      for (o = 0; o < offs.length; o++) {
+        ctx.beginPath();
+        for (var k = 0; k < track.track.length; k++) {
+          var tp = track.track[k];
+          var tx = screenX(tp.lon, offs[o]);
+          var ty = screenOf(tp.lon, tp.lat)[1];
+          if (k === 0) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
+        }
+        ctx.stroke();
+      }
+    }
+
+    // 台站
+    for (o = 0; o < offs.length; o++) {
+      for (var n = 0; n < stations.length; n++) {
+        var st = stations[n];
+        if (filter && st.call.indexOf(filter) !== 0) continue;
+        var dx = screenX(st.lon, offs[o]);
+        var dy = screenOf(st.lon, st.lat)[1];
+        if (dx < -20 || dy < -20 || dx > size.w + 20 || dy > size.h + 20) continue;
+        var age = ageOf(st);
+        ctx.globalAlpha = alphaOf(age);
+        ctx.fillStyle = '#1f2429';
+        ctx.beginPath();
+        ctx.arc(dx, dy, age <= 1800 ? 3.2 : 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    if (picked) {
+      var mx = screenX(picked.lon, 0);
+      var my = screenOf(picked.lon, picked.lat)[1];
+      ctx.strokeStyle = '#b3141f';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(mx, my, 7, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#b3141f';
+      ctx.font = '11px ui-monospace, Menlo, Consolas, monospace';
+      ctx.fillText(picked.call, mx + 10, my - 8);
+    }
+  }
+
+  function fmt(iso) {
+    if (!iso) return '—';
+    return iso.replace('T', ' ').replace(/([+-]\d\d:\d\d)$/, '');
+  }
+
+  function grid4(lat, lon) {
+    var A = 'ABCDEFGHIJKLMNOPQRSTUVWX';
+    var lo = lon + 180, la = lat + 90;
+    var f1 = Math.floor(lo / 20), f2 = Math.floor(la / 10);
+    var s1 = Math.floor((lo % 20) / 2), s2 = Math.floor(la % 10);
+    return A.charAt(f1) + A.charAt(f2) + s1 + s2;
+  }
+
+  function showPanel(st) {
+    picked = st;
+    track = null;
+    document.getElementById('pcall').textContent = st.call;
+    var rows = [
+      ['最后听到', fmt(st.last_seen)],
+      ['网格', grid4(st.lat, st.lon)],
+      ['位置', st.lat.toFixed(4) + ', ' + st.lon.toFixed(4)],
+      ['来源', st.via === 'rf' ? '射频' : '网络'],
+      ['报文', st.packets + ' 条']
+    ];
+    if (st.alt !== null && st.alt !== undefined) rows.push(['高度', Math.round(st.alt) + ' m']);
+    if (st.speed) rows.push(['速度', Math.round(st.speed) + ' km/h']);
+    if (st.course) rows.push(['方向', Math.round(st.course) + '°']);
+    var html = '';
+    for (var i = 0; i < rows.length; i++) {
+      html += '<dt>' + rows[i][0] + '</dt><dd>' + escapeHtml(String(rows[i][1])) + '</dd>';
+    }
+    document.getElementById('pfields').innerHTML = html;
+    document.getElementById('pnote').textContent = st.comment ? st.comment : '';
+    panel.classList.add('on');
+    draw();
+
+    fetch('/api/public/stations/' + encodeURIComponent(st.call))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (!data || !picked || picked.call !== st.call) return;
+        track = data;
+        if (data.first_seen) {
+          var note = document.getElementById('pnote');
+          note.textContent = (data.comment || '') +
+            (data.comment ? ' · ' : '') + '首次看到 ' + fmt(data.first_seen);
+        }
+        draw();
+      })
+      .catch(function () { /* 轨迹拿不到就不画，详情本身还在 */ });
+  }
+
+  function escapeHtml(text) {
+    return text.replace(/[&<>"]/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch];
+    });
+  }
+
+  function hidePanel() {
+    picked = null;
+    track = null;
+    panel.classList.remove('on');
+    draw();
+  }
+
+  function load() {
+    stateEl.textContent = '正在读台站…';
+    fetch('/api/public/stations?window=24h&limit=5000')
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function (data) {
+        stations = data.stations || [];
+        stateEl.textContent = stations.length ? '' : '24 小时里还没有台站';
+        countEl.textContent = stations.length + ' 台站 · ' + fmt(data.updated) + ' 更新';
+        draw();
+      })
+      .catch(function (err) {
+        stateEl.textContent = '读不到台站数据（' + String(err) + '）';
+      });
+  }
+
+  function hitTest(x, y) {
+    var best = null, bestD = 12;
+    for (var i = 0; i < stations.length; i++) {
+      var st = stations[i];
+      if (filter && st.call.indexOf(filter) !== 0) continue;
+      var p = screenOf(st.lon, st.lat);
+      var d = Math.hypot(p[0] - x, p[1] - y);
+      if (d < bestD) { bestD = d; best = st; }
+    }
+    return best;
+  }
+
+  canvas.addEventListener('pointerdown', function (ev) {
+    canvas.setPointerCapture(ev.pointerId);
+    drag = { x: ev.clientX, y: ev.clientY, lon: view.lon, lat: view.lat, moved: 0 };
+    canvas.classList.add('dragging');
+  });
+
+  canvas.addEventListener('pointermove', function (ev) {
+    if (!drag) return;
+    var dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
+    var c = project(drag.lon, drag.lat);
+    var moved = unproject(c[0] - dx / view.z, c[1] - dy / view.z);
+    view.lon = moved[0];
+    view.lat = moved[1];
+    clampView();
+    draw();
+  });
+
+  canvas.addEventListener('pointerup', function (ev) {
+    canvas.classList.remove('dragging');
+    if (drag && drag.moved < 5) {
+      var rect = canvas.getBoundingClientRect();
+      var st = hitTest(ev.clientX - rect.left, ev.clientY - rect.top);
+      if (st) showPanel(st); else hidePanel();
+    }
+    drag = null;
+  });
+
+  canvas.addEventListener('pointercancel', function () {
+    drag = null;
+    canvas.classList.remove('dragging');
+  });
+
+  canvas.addEventListener('wheel', function (ev) {
+    ev.preventDefault();
+    var rect = canvas.getBoundingClientRect();
+    var mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+    var before = unproject(
+      project(view.lon, view.lat)[0] + (mx - size.w / 2) / view.z,
+      project(view.lon, view.lat)[1] + (my - size.h / 2) / view.z);
+    view.z *= ev.deltaY < 0 ? 1.25 : 0.8;
+    clampView();
+    var after = project(before[0], before[1]);
+    var c = unproject(after[0] - (mx - size.w / 2) / view.z,
+                      after[1] - (my - size.h / 2) / view.z);
+    view.lon = c[0];
+    view.lat = c[1];
+    clampView();
+    draw();
+  }, { passive: false });
+
+  document.getElementById('zin').addEventListener('click', function () {
+    view.z *= 1.4; clampView(); draw();
+  });
+  document.getElementById('zout').addEventListener('click', function () {
+    view.z *= 0.7; clampView(); draw();
+  });
+  document.getElementById('reload').addEventListener('click', load);
+  document.getElementById('pclose').addEventListener('click', hidePanel);
+  qEl.addEventListener('input', function () {
+    filter = qEl.value.trim().toUpperCase();
+    draw();
+  });
+
+  window.addEventListener('resize', resize);
+
+  fetch('/assets/coast.json')
+    .then(function (r) { return r.ok ? r.json() : { rings: [] }; })
+    .then(function (data) { coast = data.rings || []; resize(); })
+    .catch(function () { resize(); });
+
+  resize();
+  load();
+  setInterval(load, 60000);
+})();
+</script>
+</body>
+</html>

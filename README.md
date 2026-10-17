@@ -13,6 +13,9 @@
 - 呼号白名单：待审核、已授权、已过期、已暂停、已撤销五种状态，带生效与失效时间。
 - 报文实时转发，每条连接自己的 APRS-IS 过滤器（`r/ m/ b/ p/ t/ d/ f/ s/ q/ u/ a/`）。
 - 最近 24 小时的台站位置，HTTP JSON 接口读，OpenAPI 3 描述见 `docs/openapi.json`。
+- 一张台站页 `/stations`：世界地图上画 24 小时里的台站，点一个点看详情与轨迹。
+  不接地图瓦片，轮廓是 Natural Earth 110m 抽稀出来的（`aprsnetcn/coast.json`，
+  由 `tools/gen_coast.py` 生成）。
 - 管理控制台：账号与名单、发布版本、审计日志、连接状态。
 
 ## 跑起来

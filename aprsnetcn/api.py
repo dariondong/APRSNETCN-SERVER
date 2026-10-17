@@ -26,6 +26,7 @@ class Api:
         self.tokens = {}
         self.lock = threading.Lock()
         self.rate = {}
+        self.public_rate = {}
 
     # ── token ──
     def issue(self, call):
@@ -54,6 +55,22 @@ class Api:
                 window.pop(0)
             return len(window) <= config.API_RATE_MINUTE
 
+    def public_ok(self, address):
+        """公开接口按来源 IP 限流。
+
+        不验 token，所以只能按 IP 数：限的是「同一个浏览器一秒刷几十下」，
+        不是防人。表格长到一定规模就整表清一次，否则一个扫描器能把内存撑开。
+        """
+        now = time.time()
+        with self.lock:
+            if len(self.public_rate) > 2000:
+                self.public_rate.clear()
+            window = self.public_rate.setdefault(address or "-", [])
+            window.append(now)
+            while window and now - window[0] > 60:
+                window.pop(0)
+            return len(window) <= config.PUBLIC_RATE_MINUTE
+
 
 def _bbox(value):
     if not value:
@@ -66,6 +83,36 @@ def _bbox(value):
     except ValueError:
         raise ValueError("bbox")
     return numbers
+
+
+def _list_params(query, default_limit=500):
+    """列表接口的公共参数：window / since / bbox / limit / offset。
+
+    带 token 的 `/api/v1/stations` 与不带 token 的 `/api/public/stations` 是同一份
+    语义，写两份迟早对不上，所以只留这一处。
+    """
+    window = (query.get("window") or ["24h"])[0]
+    hours = 24
+    match = re.match(r"^(\d{1,3})h?$", window)
+    if match:
+        hours = max(1, min(config.RETENTION_HOURS, int(match.group(1))))
+    since = (query.get("since") or [""])[0]
+    try:
+        since_epoch = (int(datetime.fromisoformat(since.replace("Z", "+00:00"))
+                           .timestamp()) if since else None)
+    except ValueError:
+        return None, "bad-since"
+    try:
+        bbox = _bbox((query.get("bbox") or [""])[0])
+    except ValueError:
+        return None, "bad-bbox"
+    try:
+        limit = max(1, min(5000, int((query.get("limit") or [str(default_limit)])[0])))
+        offset = max(0, int((query.get("offset") or ["0"])[0]))
+    except ValueError:
+        return None, "bad-limit"
+    return {"hours": hours, "since": since_epoch, "bbox": bbox,
+            "limit": limit, "offset": offset}, ""
 
 
 def make_server(store, hub, ingest=None):
@@ -151,6 +198,14 @@ def _handler_class(api):
                     return self._version()
                 if path == "/api/v1/openapi.json":
                     return self._openapi()
+                if path == "/stations":
+                    return self._stations_page()
+                if path == "/assets/coast.json":
+                    return self._asset("coast.json", "application/json; charset=utf-8")
+                if path == "/api/public/stations":
+                    return self._public_stations(query)
+                if path.startswith("/api/public/stations/"):
+                    return self._public_station(path.rsplit("/", 1)[-1])
                 if path == "/api/v1/stations":
                     return self._stations(query)
                 if path.startswith("/api/v1/stations/"):
@@ -192,6 +247,30 @@ def _handler_class(api):
             except OSError:
                 return self._json(200, {"ok": True, "server": config.SERVER_ID,
                                         "proto": __version__})
+
+        def _stations_page(self):
+            """公开的 24 小时台站页：地图 + 点选详情，不用 token 也不用登录。"""
+            path = os.path.join(os.path.dirname(__file__), "stations.html")
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    return self._html(200, handle.read())
+            except OSError:
+                return self._json(404, {"error": "page-missing"})
+
+        def _asset(self, name, content_type):
+            path = os.path.join(os.path.dirname(__file__), name)
+            try:
+                with open(path, "rb") as handle:
+                    body = handle.read()
+            except OSError:
+                return self._json(404, {"error": "asset-missing"})
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self._cors()
+            self.end_headers()
+            self.wfile.write(body)
 
         # ── 公开 API ──
         def _health(self):
@@ -264,33 +343,43 @@ def _handler_class(api):
         def _stations(self, query):
             if self._token_ok() is None:
                 return
-            window = (query.get("window") or ["24h"])[0]
-            hours = 24
-            match = re.match(r"^(\d{1,3})h?$", window)
-            if match:
-                hours = max(1, min(config.RETENTION_HOURS, int(match.group(1))))
-            since = (query.get("since") or [""])[0]
-            try:
-                since_epoch = int(datetime.fromisoformat(since.replace("Z", "+00:00")).timestamp()) if since else None
-            except ValueError:
-                return self._json(400, {"error": "bad-since"})
-            try:
-                bbox = _bbox((query.get("bbox") or [""])[0])
-            except ValueError:
-                return self._json(400, {"error": "bad-bbox"})
-            try:
-                limit = max(1, min(5000, int((query.get("limit") or ["500"])[0])))
-                offset = max(0, int((query.get("offset") or ["0"])[0]))
-            except ValueError:
-                return self._json(400, {"error": "bad-limit"})
-            rows = api.store.stations(window_hours=hours, since=since_epoch, bbox=bbox,
-                                      limit=limit, offset=offset)
+            params, error = _list_params(query, default_limit=500)
+            if error:
+                return self._json(400, {"error": error})
+            rows = api.store.stations(window_hours=params["hours"],
+                                      since=params["since"], bbox=params["bbox"],
+                                      limit=params["limit"], offset=params["offset"])
             self._json(200, {
-                "window": "%dh" % hours,
+                "window": "%dh" % params["hours"],
                 "updated": store_module.now_iso(),
                 "count": len(rows),
                 "stations": rows,
             })
+
+        # ── 公开接口：台站页用的，两处都不验 token，按 IP 限流 ──
+        def _public_stations(self, query):
+            if not api.public_ok(self.client_address[0]):
+                return self._json(429, {"error": "rate-limited"})
+            params, error = _list_params(query, default_limit=5000)
+            if error:
+                return self._json(400, {"error": error})
+            rows = api.store.stations(window_hours=params["hours"],
+                                      since=params["since"], bbox=params["bbox"],
+                                      limit=params["limit"], offset=params["offset"])
+            self._json(200, {
+                "window": "%dh" % params["hours"],
+                "updated": store_module.now_iso(),
+                "count": len(rows),
+                "stations": rows,
+            })
+
+        def _public_station(self, call):
+            if not api.public_ok(self.client_address[0]):
+                return self._json(429, {"error": "rate-limited"})
+            data = api.store.station(call)
+            if data is None:
+                return self._json(404, {"error": "not-found"})
+            self._json(200, data)
 
         def _station(self, call):
             if self._token_ok() is None:

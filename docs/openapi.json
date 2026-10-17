@@ -5,73 +5,173 @@
     "version": "0.1.0",
     "description": "APRSNETCN SERVER 保存最近 24 小时收到的台站位置，用这份接口读出来。任何客户端都能调，不限于 APRSLocus。"
   },
-  "servers": [{ "url": "/", "description": "当前实例" }],
-  "tags": [{ "name": "auth" }, { "name": "stations" }, { "name": "meta" }],
+  "servers": [
+    {
+      "url": "/",
+      "description": "当前实例"
+    }
+  ],
+  "tags": [
+    {
+      "name": "auth"
+    },
+    {
+      "name": "stations"
+    },
+    {
+      "name": "meta"
+    },
+    {
+      "name": "public",
+      "description": "不用 token 的公开接口与页面"
+    }
+  ],
   "components": {
     "securitySchemes": {
-      "bearer": { "type": "http", "scheme": "bearer" }
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
     },
     "schemas": {
       "LoginRequest": {
         "type": "object",
-        "required": ["account", "password"],
+        "required": [
+          "account",
+          "password"
+        ],
         "properties": {
-          "account": { "type": "string", "example": "bg7lzq" },
-          "password": { "type": "string", "example": "……" }
+          "account": {
+            "type": "string",
+            "example": "bg7lzq"
+          },
+          "password": {
+            "type": "string",
+            "example": "……"
+          }
         }
       },
       "LoginResponse": {
         "type": "object",
         "properties": {
-          "ok": { "type": "boolean" },
-          "token": { "type": "string" },
-          "call": { "type": "string", "example": "BG7LZQ" },
-          "expires": { "type": "string", "format": "date-time" }
+          "ok": {
+            "type": "boolean"
+          },
+          "token": {
+            "type": "string"
+          },
+          "call": {
+            "type": "string",
+            "example": "BG7LZQ"
+          },
+          "expires": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "Symbol": {
         "type": "object",
         "properties": {
-          "table": { "type": "string", "example": "/" },
-          "code": { "type": "string", "example": ">" }
+          "table": {
+            "type": "string",
+            "example": "/"
+          },
+          "code": {
+            "type": "string",
+            "example": ">"
+          }
         }
       },
       "Station": {
         "type": "object",
         "properties": {
-          "call": { "type": "string", "example": "BG7LZQ-9" },
-          "last_seen": { "type": "string", "format": "date-time" },
-          "lat": { "type": "number", "example": 39.9 },
-          "lon": { "type": "number", "example": 116.383 },
-          "symbol": { "$ref": "#/components/schemas/Symbol" },
-          "speed": { "type": "number", "nullable": true },
-          "course": { "type": "number", "nullable": true },
-          "alt": { "type": "number", "nullable": true },
-          "comment": { "type": "string" },
-          "via": { "type": "string", "enum": ["rf", "is"] },
-          "packets": { "type": "integer" }
+          "call": {
+            "type": "string",
+            "example": "BG7LZQ-9"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lat": {
+            "type": "number",
+            "example": 39.9
+          },
+          "lon": {
+            "type": "number",
+            "example": 116.383
+          },
+          "symbol": {
+            "$ref": "#/components/schemas/Symbol"
+          },
+          "speed": {
+            "type": "number",
+            "nullable": true
+          },
+          "course": {
+            "type": "number",
+            "nullable": true
+          },
+          "alt": {
+            "type": "number",
+            "nullable": true
+          },
+          "comment": {
+            "type": "string"
+          },
+          "via": {
+            "type": "string",
+            "enum": [
+              "rf",
+              "is"
+            ]
+          },
+          "packets": {
+            "type": "integer"
+          }
         }
       },
       "TrackPoint": {
         "type": "object",
         "properties": {
-          "time": { "type": "string", "format": "date-time" },
-          "lat": { "type": "number" },
-          "lon": { "type": "number" },
-          "speed": { "type": "number", "nullable": true },
-          "course": { "type": "number", "nullable": true }
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lat": {
+            "type": "number"
+          },
+          "lon": {
+            "type": "number"
+          },
+          "speed": {
+            "type": "number",
+            "nullable": true
+          },
+          "course": {
+            "type": "number",
+            "nullable": true
+          }
         }
       },
       "StationDetail": {
         "allOf": [
-          { "$ref": "#/components/schemas/Station" },
+          {
+            "$ref": "#/components/schemas/Station"
+          },
           {
             "type": "object",
             "properties": {
-              "first_seen": { "type": "string", "format": "date-time" },
+              "first_seen": {
+                "type": "string",
+                "format": "date-time"
+              },
               "track": {
                 "type": "array",
-                "items": { "$ref": "#/components/schemas/TrackPoint" }
+                "items": {
+                  "$ref": "#/components/schemas/TrackPoint"
+                }
               }
             }
           }
@@ -80,34 +180,68 @@
       "StationList": {
         "type": "object",
         "properties": {
-          "window": { "type": "string", "example": "24h" },
-          "updated": { "type": "string", "format": "date-time" },
-          "count": { "type": "integer" },
+          "window": {
+            "type": "string",
+            "example": "24h"
+          },
+          "updated": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "count": {
+            "type": "integer"
+          },
           "stations": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/Station" }
+            "items": {
+              "$ref": "#/components/schemas/Station"
+            }
           }
         }
       },
       "Health": {
         "type": "object",
         "properties": {
-          "ok": { "type": "boolean" },
-          "server": { "type": "string" },
-          "proto": { "type": "string" },
-          "uptime": { "type": "integer" },
-          "clients": { "type": "integer" },
-          "packets_in": { "type": "integer" },
-          "packets_out": { "type": "integer" },
-          "stations_24h": { "type": "integer" },
-          "positions_24h": { "type": "integer" },
-          "time": { "type": "string", "format": "date-time" }
+          "ok": {
+            "type": "boolean"
+          },
+          "server": {
+            "type": "string"
+          },
+          "proto": {
+            "type": "string"
+          },
+          "uptime": {
+            "type": "integer"
+          },
+          "clients": {
+            "type": "integer"
+          },
+          "packets_in": {
+            "type": "integer"
+          },
+          "packets_out": {
+            "type": "integer"
+          },
+          "stations_24h": {
+            "type": "integer"
+          },
+          "positions_24h": {
+            "type": "integer"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "Error": {
         "type": "object",
         "properties": {
-          "error": { "type": "string", "example": "unauthorized" }
+          "error": {
+            "type": "string",
+            "example": "unauthorized"
+          }
         }
       }
     }
@@ -115,13 +249,17 @@
   "paths": {
     "/api/v1/login": {
       "post": {
-        "tags": ["auth"],
+        "tags": [
+          "auth"
+        ],
         "summary": "账号密码换 token",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/LoginRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
             }
           }
         },
@@ -130,48 +268,75 @@
             "description": "拿到 token",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/LoginResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
               }
             }
           },
-          "401": { "description": "账号或密码不对" },
-          "403": { "description": "名单里没有或授权失效" }
+          "401": {
+            "description": "账号或密码不对"
+          },
+          "403": {
+            "description": "名单里没有或授权失效"
+          }
         }
       }
     },
     "/api/v1/stations": {
       "get": {
-        "tags": ["stations"],
+        "tags": [
+          "stations"
+        ],
         "summary": "最近 24 小时的台站列表",
-        "security": [{ "bearer": [] }],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "window",
             "in": "query",
-            "schema": { "type": "string", "default": "24h" },
+            "schema": {
+              "type": "string",
+              "default": "24h"
+            },
             "description": "时间窗口，最多到服务器保留时长（默认 24h）"
           },
           {
             "name": "since",
             "in": "query",
-            "schema": { "type": "string", "format": "date-time" },
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
             "description": "只要这个时刻之后的报文，ISO 8601"
           },
           {
             "name": "bbox",
             "in": "query",
-            "schema": { "type": "string" },
+            "schema": {
+              "type": "string"
+            },
             "description": "minlat,minlon,maxlat,maxlon"
           },
           {
             "name": "limit",
             "in": "query",
-            "schema": { "type": "integer", "default": 500, "maximum": 5000 }
+            "schema": {
+              "type": "integer",
+              "default": 500,
+              "maximum": 5000
+            }
           },
           {
             "name": "offset",
             "in": "query",
-            "schema": { "type": "integer", "default": 0 }
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
           }
         ],
         "responses": {
@@ -179,46 +344,73 @@
             "description": "台站列表",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/StationList" }
+                "schema": {
+                  "$ref": "#/components/schemas/StationList"
+                }
               }
             }
           },
-          "401": { "description": "没有 token 或已过期" },
-          "429": { "description": "请求太密" }
+          "401": {
+            "description": "没有 token 或已过期"
+          },
+          "429": {
+            "description": "请求太密"
+          }
         }
       }
     },
     "/api/v1/stations/{call}": {
       "get": {
-        "tags": ["stations"],
+        "tags": [
+          "stations"
+        ],
         "summary": "单台站与 24 小时轨迹",
-        "security": [{ "bearer": [] }],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "parameters": [
-          { "name": "call", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "call",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "台站",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/StationDetail" }
+                "schema": {
+                  "$ref": "#/components/schemas/StationDetail"
+                }
               }
             }
           },
-          "404": { "description": "24 小时内没有这台站" }
+          "404": {
+            "description": "24 小时内没有这台站"
+          }
         }
       }
     },
     "/api/v1/health": {
       "get": {
-        "tags": ["meta"],
+        "tags": [
+          "meta"
+        ],
         "summary": "运行状态，不用鉴权",
         "responses": {
           "200": {
             "description": "状态",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Health" }
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
               }
             }
           }
@@ -227,16 +419,140 @@
     },
     "/api/v1/version": {
       "get": {
-        "tags": ["meta"],
+        "tags": [
+          "meta"
+        ],
         "summary": "协议版本与服务器实际策略",
-        "responses": { "200": { "description": "版本信息" } }
+        "responses": {
+          "200": {
+            "description": "版本信息"
+          }
+        }
       }
     },
     "/api/v1/openapi.json": {
       "get": {
-        "tags": ["meta"],
+        "tags": [
+          "meta"
+        ],
         "summary": "这份文档本身",
-        "responses": { "200": { "description": "OpenAPI 3" } }
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3"
+          }
+        }
+      }
+    },
+    "/api/public/stations": {
+      "get": {
+        "tags": [
+          "public"
+        ],
+        "summary": "24 小时台站，不用 token（按来源 IP 限流）",
+        "parameters": [
+          {
+            "name": "window",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "24h"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "bbox",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 5000
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "台站列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stations"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "同一个 IP 请求太密"
+          }
+        }
+      }
+    },
+    "/api/public/stations/{call}": {
+      "get": {
+        "tags": [
+          "public"
+        ],
+        "summary": "单台站与 24 小时轨迹，不用 token",
+        "parameters": [
+          {
+            "name": "call",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "台站",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Station"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "24 小时里没有这台站"
+          },
+          "429": {
+            "description": "同一个 IP 请求太密"
+          }
+        }
+      }
+    },
+    "/stations": {
+      "get": {
+        "tags": [
+          "public"
+        ],
+        "summary": "台站页（地图上点选台站）",
+        "responses": {
+          "200": {
+            "description": "HTML 页面"
+          }
+        }
       }
     }
   }

@@ -80,6 +80,26 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   'http://8.138.199.11:8899/api/v1/stations/BG7LZQ-9'
 ```
 
+## 台站页
+
+```
+GET /stations
+```
+
+一张世界地图，24 小时里的台站都画在上面，点一个点看这台站的详情与轨迹。
+不用账号也不用 token，浏览器直接打开。页面上那个「呼号前缀」只筛不查，
+刷新与自动刷新（每分钟）走的都是下面这两个公开接口。
+
+## 公开接口
+
+```
+GET /api/public/stations            同一份台站列表，参数与 /api/v1/stations 相同
+GET /api/public/stations/{call}     单台站与轨迹
+```
+
+不验 token，按来源 IP 限流（默认每分钟 60 次）。给台站页和别的只读页面用，
+要写进正式客户端的还是带 token 的那两个。
+
 ## 不用鉴权的两个
 
 - `GET /api/v1/health` 运行状态：连接数、收发报文数、24 小时台站数。
@@ -94,6 +114,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | 401 | `bad-credentials` | 账号或密码不对 |
 | 403 | `not-authorized` | 名单里没有，或授权已过期、已暂停、已撤销 |
 | 404 | `not-found` | 台站不在 24 小时窗口里 |
+| 429 | `rate-limited` | 这个 IP 调公开接口太密（`/api/public/*`） |
 | 429 | `rate-limited` | 这个 token 请求太密 |
 
 所有响应带 `Access-Control-Allow-Origin: *`，浏览器里可以直接调。

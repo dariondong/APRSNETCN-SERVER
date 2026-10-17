@@ -264,6 +264,28 @@ def test_end_to_end():
     status, doc = api_call("/api/v1/openapi.json")
     ok("OpenAPI 文档取得到", status == 200 and doc.get("openapi", "").startswith("3."))
 
+    # ⑨.5 公开台站页与它调的两个接口：不验 token
+    status, body = api_call("/api/public/stations?window=24h&limit=5000")
+    ok("公开台站列表不用 token", status == 200 and body.get("count", 0) >= 1,
+       body.get("count"))
+    ok("公开列表按台站聚合", all(row.get("call") for row in body.get("stations") or []),
+       len(body.get("stations") or []))
+    status, one = api_call("/api/public/stations/BG7LZQ")
+    ok("公开单站带轨迹", status == 200 and len(one.get("track") or []) >= 1,
+       len(one.get("track") or []))
+    status, _ = api_call("/api/public/stations/BG0XYZ")
+    ok("公开单站查不到返回 404", status == 404, status)
+    status, _ = api_call("/api/public/stations?bbox=1,2,3")
+    ok("公开列表参数写错返回 400", status == 400, status)
+    page = urllib.request.urlopen("http://127.0.0.1:%d/stations" % HTTP_PORT,
+                                  timeout=5).read().decode("utf-8")
+    ok("台站页取得到", "<canvas" in page and "24 小时" in page, len(page))
+    coast = json.loads(urllib.request.urlopen(
+        "http://127.0.0.1:%d/assets/coast.json" % HTTP_PORT,
+        timeout=5).read().decode("utf-8"))
+    ok("世界轮廓随页发出", len(coast.get("rings") or []) > 10,
+       len(coast.get("rings") or []))
+
     # ⑩ 管理接口
     status, state_body = api_call("/api/admin/state", admin="test-admin")
     ok("控制台状态要口令", status == 200 and state_body.get("ok"), status)
