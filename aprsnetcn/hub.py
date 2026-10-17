@@ -313,17 +313,20 @@ class Hub:
         if not allowed:
             self._reject(client, reason)
             return False
-        # 5. 账号与密码
+        # 5. 账号与密码（设了口令的记录）
         if record.get("pass_hash"):
-            if not login.account or not login.password:
+            if login.account or login.password:
+                by_name = self.store.account_by_name(login.account)
+                if (by_name is None or by_name["call"] != record["call"]
+                        or not auth.verify_password(login.password, record["pass_hash"])):
+                    self._reject(client, "auth-failed")
+                    return False
+                client.verified = True
+            elif config.AUTH_MODE == "required":
                 self._reject(client, "auth-required")
                 return False
-            by_name = self.store.account_by_name(login.account)
-            if (by_name is None or by_name["call"] != record["call"]
-                    or not auth.verify_password(login.password, record["pass_hash"])):
-                self._reject(client, "auth-failed")
-                return False
-            client.verified = True
+            else:
+                client.verified = verified
         else:
             client.verified = verified
         client.read_only = read_only or not client.verified

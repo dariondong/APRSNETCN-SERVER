@@ -48,6 +48,11 @@ PASSCODE_MODE = _text("ACN_PASSCODE_MODE", "compat").lower()
 # 客户端登录呼号与报文源呼号不一致时怎么办：allow / warn / reject
 SRC_POLICY = _text("ACN_SRC_POLICY", "warn").lower()
 
+# 名单里设了口令的记录，客户端不带 auth 怎么办
+# optional：不带就按 passcode 放行（标准 APRS 客户端能直接用）
+# required：必须带 auth 才放行
+AUTH_MODE = _text("ACN_AUTH_MODE", "optional").lower()
+
 # 客户端报文是否补 q 构造（qAC,登录呼号），与 APRS-IS 的行为一致
 ADD_Q_CONSTRUCT = _text("ACN_ADD_Q_CONSTRUCT", "1") not in ("0", "false", "no", "off")
 

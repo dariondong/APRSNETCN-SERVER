@@ -45,8 +45,9 @@ ACN_BOOTSTRAP_CALL=BG7LZQ ACN_BOOTSTRAP_ACCOUNT=bg7lzq ACN_BOOTSTRAP_PASSWORD=�
 user BG7LZQ pass 13023 vers APRSLocus 2.2.0 auth bg7lzq <密码> filter r/39.9/116.4/300
 ```
 
-名单里这条记录设了口令，登录就必须带 `auth`。没设口令的记录按 passcode 放行，
-与 APRS-IS 一样。
+名单里这条记录设了口令时，默认 `ACN_AUTH_MODE=optional`：客户端带了 `auth` 就核对账号密码，
+不带就按 passcode 放行。改成 `required` 后，带口令的记录必须带 `auth`，标准 APRS 客户端
+就连不上了。没设口令的记录一直只看 passcode。
 
 ## 读 24 小时台站
 

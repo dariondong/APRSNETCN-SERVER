@@ -25,6 +25,7 @@
 | 3.2 登录格式 | `hub.LOGIN_RE`，`user … pass … vers … auth … filter …` |
 | 3.3 校验顺序 | `Hub._login`：格式 → 呼号 → passcode → 白名单 → 状态 → 放行 |
 | 3.4 Passcode | `aprslib.passcode`，策略 `ACN_PASSCODE_MODE=compat/strict/off` |
+| 3.4 账号口令 | 登录行末尾 `auth <账号> <密码>`；`ACN_AUTH_MODE=optional/required` 决定不带时放不放 | 可选与强制两种模式各一条断言 |
 | 3.5 拒绝接入 | `Hub._reject`，只回类别，不回内部信息 |
 
 ## 4 白名单

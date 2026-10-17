@@ -181,9 +181,19 @@ def test_end_to_end():
     more = read_until(a, "active", 2.0)
     ok("过滤器回执送到", "# filter r/39.9/116.4/300 active" in (reply + more),
        (reply + more).strip())
-    # ② 没带账号密码
+    # ② 不带账号密码：可选模式按 passcode 放行，强制模式拒
+    b, reply = connect(node, "user BG7LZQ pass %d" % code)
+    ok("可选模式下不带 auth 也能登录", "logresp BG7LZQ verified" in reply, reply.strip()[:90])
+    b.close()
+    config.AUTH_MODE = "required"
     b, reply = connect(node, "user BG7LZQ pass %d" % code, needle="not authorized")
-    ok("设了口令的账号必须带 auth", "auth-required" in reply, reply.strip())
+    ok("强制模式下不带 auth 被拒", "auth-required" in reply, reply.strip())
+    b.close()
+    config.AUTH_MODE = "optional"
+    # ②b 带了错的密码照样拒
+    b, reply = connect(node, "user BG7LZQ pass %d auth bg7lzq wrong" % code,
+                       needle="not authorized")
+    ok("带错的密码被拒", "auth-failed" in reply, reply.strip())
     b.close()
     # ③ 不在名单
     b, reply = connect(node, "user N0CALL pass -1", needle="not authorized")
