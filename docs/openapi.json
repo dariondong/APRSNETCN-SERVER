@@ -232,6 +232,16 @@
           "time": {
             "type": "string",
             "format": "date-time"
+          },
+          "whitelist_version": {
+            "type": "integer",
+            "description": "本地名单版本号"
+          },
+          "whitelist_synced_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "最近一次名单同步时间，没同步过是 null"
           }
         }
       },

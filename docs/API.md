@@ -102,7 +102,8 @@ GET /api/public/stations/{call}     单台站与轨迹
 
 ## 不用鉴权的两个
 
-- `GET /api/v1/health` 运行状态：连接数、收发报文数、24 小时台站数。
+- `GET /api/v1/health` 运行状态：连接数、收发报文数、24 小时台站数、本地名单版本与最近同步时间。
+  草案 7.4 要求能监控白名单版本与同步时间，这条接口不需要鉴权就能看。
 - `GET /api/v1/version` 协议版本与服务端实际策略：`passcode_mode`、`src_policy`、`auth_mode`、
   `retention_hours`、`whitelist_max_age_hours`、`default_filter`（没带过滤器的连接收全部报文）、
   `filters`（认得的过滤器前缀）。

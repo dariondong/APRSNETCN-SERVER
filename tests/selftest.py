@@ -409,6 +409,10 @@ def test_end_to_end():
        state_body["meta"].get("admin_denied"))
     report = self_check(store)
     ok("启动自检把库查一遍", report["db"] == "ok", report)
+    status, health_body = api_call("/api/v1/health")
+    ok("健康接口公布名单版本与同步时间",
+       status == 200 and "whitelist_version" in health_body
+       and "whitelist_synced_at" in health_body, list(health_body)[:6])
     status, version_body = api_call("/api/v1/version")
     ok("版本接口公布默认订阅策略",
        version_body.get("default_filter") == "all"

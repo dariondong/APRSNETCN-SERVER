@@ -317,6 +317,8 @@ def _handler_class(api):
                 "packets_out": stats["packets_out"],
                 "stations_24h": api.store.station_count(),
                 "positions_24h": api.store.position_count(),
+                "whitelist_version": api.store.whitelist_version(),
+                "whitelist_synced_at": api.store.meta("whitelist_synced_at"),
                 "ingest": api.ingest.stats() if api.ingest else {"enabled": False},
                 "time": store_module.now_iso(),
             })
