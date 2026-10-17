@@ -52,8 +52,9 @@ class Ingest:
                 self._session()
                 backoff = 5
             except Exception as error:                     # noqa: BLE001
-                self.error = "%s: %s" % (type(error).__name__, error)
-                self.store.audit("ingest-error", {"error": self.error})
+                if self.running:                           # 主动 stop() 时不算错
+                    self.error = "%s: %s" % (type(error).__name__, error)
+                    self.store.audit("ingest-error", {"error": self.error})
             finally:
                 self.connected = False
                 self.sock = None
