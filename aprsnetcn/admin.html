@@ -30,6 +30,8 @@ button.danger { color:var(--hot); border-color:var(--hot); }
 .note { color:var(--grey); font-size:12px; }
 .ok { color:#1c6b3a; } .bad { color:var(--hot); }
 #log { max-height:280px; overflow:auto; }
+.tall { max-height:280px; overflow:auto; }
+.pkt { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; word-break:break-all; }
 .tag { display:inline-block; padding:1px 6px; border:1px solid var(--line); font-size:11.5px; }
 </style>
 </head>
@@ -50,6 +52,41 @@ button.danger { color:var(--hot); border-color:var(--hot); }
   <div id="panel" hidden>
     <h2>运行状态</h2>
     <div id="stats" class="grid"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="refreshBtn" type="button">刷新</button>
+      <span class="note">页面开着时每 20 秒自己刷一次。</span>
+      <span class="note" id="refreshNote"></span>
+    </div>
+
+    <h2>收发统计</h2>
+    <div id="hours" class="tall"></div>
+
+    <h2>在线连接</h2>
+    <p class="note" id="clientsNote">—</p>
+    <div class="tall"><table>
+      <thead><tr><th>呼号</th><th>来源</th><th>校验</th><th>版本</th><th>连上</th><th>收</th><th>发</th><th>丢弃</th><th>过滤器</th><th></th></tr></thead>
+      <tbody id="clients"></tbody>
+    </table></div>
+
+    <h2>报文检索</h2>
+    <div class="row">
+      <input id="qText" placeholder="呼号或报文片段">
+      <select id="qDir">
+        <option value="">收发都看</option>
+        <option value="in">只看收</option>
+        <option value="out">只看发</option>
+      </select>
+      <select id="qScope">
+        <option value="packets">最近的内存环</option>
+        <option value="archive">存档（库）</option>
+      </select>
+      <button class="primary" id="qBtn" type="button">查</button>
+      <span class="note" id="qNote"></span>
+    </div>
+    <div class="tall"><table>
+      <thead><tr><th>时间</th><th>方向</th><th>源</th><th>收件人</th><th>报文</th></tr></thead>
+      <tbody id="packets"></tbody>
+    </table></div>
 
     <h2>账号与名单</h2>
     <table>
@@ -93,6 +130,21 @@ button.danger { color:var(--hot); border-color:var(--hot); }
 
   function el(id) { return document.getElementById(id); }
 
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+    });
+  }
+
+  function stamp(iso) { return String(iso || '').slice(5, 16).replace('T', ' '); }
+
+  function clockOf(epoch) {
+    var date = new Date(epoch * 1000);
+    function two(n) { return (n < 10 ? '0' : '') + n; }
+    return two(date.getMonth() + 1) + '-' + two(date.getDate()) + ' ' +
+      two(date.getHours()) + ':' + two(date.getMinutes());
+  }
+
   function call(path, options) {
     options = options || {};
     options.headers = Object.assign({
@@ -118,19 +170,91 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       ['名单版本', meta.whitelist_version],
       ['端口', (stats.ports || []).join(' / ')]
     ];
+    var archive = meta.archive || {};
+    rows.push(['报文存档', archive.enabled ? (archive.lines + ' 行 / ' + archive.hours + ' 小时')
+      : '关']);
     var html = '';
     rows.forEach(function (row) {
       html += '<div><div class="note">' + row[0] + '</div><div class="mono">' +
         String(row[1]) + '</div></div>';
     });
     el('stats').innerHTML = html;
+    paintHours(stats.hourly || []);
+    paintClients(stats.clients || []);
     el('apis').textContent = [
       'GET  /api/v1/health',
       'POST /api/v1/login      {"account":"…","password":"…"}',
       'GET  /api/v1/stations   ?window=24h&bbox=minlat,minlon,maxlat,maxlon&limit=500',
       'GET  /api/v1/stations/{call}',
-      'GET  /api/v1/openapi.json'
+      'GET  /api/v1/openapi.json',
+      'GET  /api/admin/clients',
+      'POST /api/admin/kick    {"call":"BG7LZQ-2"}',
+      'GET  /api/admin/packets ?q=&dir=in|out&limit=100',
+      'GET  /api/admin/archive ?q=&dir=in|out&limit=100'
     ].join('\n');
+  }
+
+  function paintHours(rows) {
+    var html = '<table><thead><tr><th>小时</th><th>收</th><th>发</th></tr></thead><tbody>';
+    rows.forEach(function (row) {
+      html += '<tr><td class="mono">' + stamp(row.hour) + '</td><td class="mono">' +
+        row.in + '</td><td class="mono">' + row.out + '</td></tr>';
+    });
+    el('hours').innerHTML = html + '</tbody></table>';
+  }
+
+  function paintClients(clients) {
+    var html = '';
+    clients.forEach(function (row) {
+      html += '<tr>' +
+        '<td class="mono">' + esc(row.call) + '</td>' +
+        '<td class="mono">' + esc(row.address) + '</td>' +
+        '<td>' + (row.verified ? '<span class="ok">verified</span>'
+          : '<span class="bad">unverified</span>') +
+        (row.read_only ? ' <span class="tag">只收</span>' : '') + '</td>' +
+        '<td class="note">' + esc(row.vers || '—') + '</td>' +
+        '<td class="mono">' + clockOf(row.since) + '</td>' +
+        '<td class="mono">' + row.received + '</td>' +
+        '<td class="mono">' + row.sent + '</td>' +
+        '<td class="mono">' + row.dropped + '</td>' +
+        '<td class="note">' + esc((row.filters || []).join(', ') || '—') + '</td>' +
+        '<td><button class="danger" data-kick="' + esc(row.call) + '" type="button">踢</button></td>' +
+        '</tr>';
+    });
+    el('clients').innerHTML = html ||
+      '<tr><td colspan="10" class="note">现在没有连接</td></tr>';
+    el('clientsNote').textContent = clients.length + ' 条；踢掉的连接会记一条审计。';
+  }
+
+  function paintPackets(body) {
+    var html = '';
+    (body.lines || []).forEach(function (row) {
+      html += '<tr>' +
+        '<td class="mono">' + stamp(row.time) + '</td>' +
+        '<td>' + (row.dir === 'out' ? '发' : '收') + '</td>' +
+        '<td class="mono">' + esc(row.src || '—') + '</td>' +
+        '<td class="mono">' + esc(row.dst || '—') + '</td>' +
+        '<td class="pkt">' + esc(row.line) + '</td>' +
+        '</tr>';
+    });
+    el('packets').innerHTML = html ||
+      '<tr><td colspan="5" class="note">没查到</td></tr>';
+    if (body.source === 'archive') {
+      el('qNote').textContent = body.enabled
+        ? ('存档共 ' + body.total + ' 行，保留 ' + body.hours + ' 小时；这次 ' + body.count + ' 行')
+        : '存档没开，把 ACN_ARCHIVE_ENABLED 设成 1 再重启 SERVER。';
+    } else {
+      el('qNote').textContent = '内存环 ' + body.capacity + ' 行；这次 ' + body.count + ' 行';
+    }
+  }
+
+  function search() {
+    var scope = el('qScope').value;
+    var query = '?q=' + encodeURIComponent(el('qText').value.trim()) +
+      '&dir=' + encodeURIComponent(el('qDir').value) + '&limit=100';
+    call('/api/admin/' + scope + query).then(paintPackets).catch(function (error) {
+      el('qNote').textContent = '查失败：' + error.message;
+    });
   }
 
   function paintAccounts(accounts) {
@@ -138,12 +262,12 @@ button.danger { color:var(--hot); border-color:var(--hot); }
     var html = '';
     accounts.forEach(function (row) {
       html += '<tr>' +
-        '<td class="mono">' + row.call + '</td>' +
-        '<td class="mono">' + (row.account || '') + '</td>' +
-        '<td><span class="tag">' + (row.effective || row.status) + '</span></td>' +
-        '<td class="mono">' + (row.valid_from || '—') + ' → ' + (row.valid_to || '长期') + '</td>' +
+        '<td class="mono">' + esc(row.call) + '</td>' +
+        '<td class="mono">' + esc(row.account || '') + '</td>' +
+        '<td><span class="tag">' + esc(row.effective || row.status) + '</span></td>' +
+        '<td class="mono">' + esc(row.valid_from || '—') + ' → ' + esc(row.valid_to || '长期') + '</td>' +
         '<td class="note">' + (row.pass_hash ? '已设' : '未设') + '</td>' +
-        '<td><button class="danger" data-del="' + row.call + '" type="button">删除</button></td>' +
+        '<td><button class="danger" data-del="' + esc(row.call) + '" type="button">删除</button></td>' +
         '</tr>';
     });
     el('accounts').innerHTML = html || '<tr><td colspan="6" class="note">还没有账号</td></tr>';
@@ -152,8 +276,8 @@ button.danger { color:var(--hot); border-color:var(--hot); }
   function paintAudits(audits) {
     var html = '';
     audits.forEach(function (row) {
-      html += '<tr><td class="mono">' + row.time + '</td><td>' + row.kind +
-        '</td><td class="note mono">' + JSON.stringify(row.detail) + '</td></tr>';
+      html += '<tr><td class="mono">' + esc(row.time) + '</td><td>' + esc(row.kind) +
+        '</td><td class="note mono">' + esc(JSON.stringify(row.detail)) + '</td></tr>';
     });
     el('audits').innerHTML = html;
   }
@@ -163,6 +287,7 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       paintStats(body.stats, body.meta);
       paintAccounts(body.accounts);
       paintAudits(body.audits);
+      el('refreshNote').textContent = '最后刷新 ' + stamp(body.time);
       el('loginBox').hidden = true;
       el('panel').hidden = false;
     }).catch(function (error) {
@@ -213,7 +338,31 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       .then(refresh);
   });
 
-  if (token) refresh();
+  el('clients').addEventListener('click', function (event) {
+    var target = event.target.getAttribute && event.target.getAttribute('data-kick');
+    if (!target) return;
+    if (!window.confirm('踢掉 ' + target + ' 的连接？')) return;
+    call('/api/admin/kick', { method: 'POST', body: JSON.stringify({ call: target }) })
+      .then(function (body) {
+        el('clientsNote').textContent = '踢掉 ' + body.kicked + ' 条：' + body.call;
+        refresh();
+      }).catch(function (error) {
+        el('clientsNote').textContent = '没踢掉：' + error.message;
+      });
+  });
+
+  el('qBtn').addEventListener('click', search);
+  el('qText').addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') search();
+  });
+  el('refreshBtn').addEventListener('click', refresh);
+
+  if (token) {
+    refresh();
+    window.setInterval(function () {
+      if (!el('panel').hidden) refresh();
+    }, 20000);
+  }
 })();
 </script>
 </body>

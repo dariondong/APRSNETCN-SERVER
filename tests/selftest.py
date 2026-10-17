@@ -312,7 +312,59 @@ def test_end_to_end():
                             dict(payload, sig=auth.sign(payload, "manager-secret")))
     ok("版本没前进被拒", status == 409, status)
 
-    # ⑫ 撤销后连不上
+    # ⑫ 控制台：在线连接、报文检索、存档、踢连接
+    status, body = api_call("/api/admin/clients", admin="test-admin")
+    ok("在线连接列得出来", status == 200 and body.get("count", 0) >= 1, body.get("count"))
+    rows = body.get("clients") or []
+    ok("连接行带呼号与收发计数",
+       any(row.get("call") == "BG7LZQ" and "received" in row and "sent" in row
+           for row in rows), rows[:1])
+    status, _ = api_call("/api/admin/clients", admin="wrong")
+    ok("连接列表也要口令", status == 401, status)
+    status, body = api_call("/api/admin/packets?q=test%20packet&limit=20", admin="test-admin")
+    ok("内存环里查得到刚才的报文", status == 200 and body.get("count", 0) >= 1,
+       body.get("count"))
+    ok("检索结果带源呼号",
+       all(row.get("src") == "BG7LZQ" for row in body.get("lines") or []),
+       (body.get("lines") or [])[:1])
+    status, body = api_call("/api/admin/packets?dir=out&limit=10", admin="test-admin")
+    ok("只看发的时候全带 out",
+       status == 200 and body.get("count", 0) >= 1
+       and all(row["dir"] == "out" for row in body.get("lines") or []),
+       body.get("count"))
+
+    config.ARCHIVE_ENABLED = True
+    a.sendall(b"BG7LZQ>APRS,TCPIP*:!3954.00N/11623.00E>archived line\r\n")
+    time.sleep(0.5)
+    status, body = api_call("/api/admin/archive?q=archived", admin="test-admin")
+    ok("存档开着时整行进库", status == 200 and body.get("enabled")
+       and body.get("count", 0) >= 1, body.get("count"))
+    config.ARCHIVE_ENABLED = False
+    a.sendall(b"BG7LZQ>APRS,TCPIP*:!3954.00N/11623.00E>not archived\r\n")
+    time.sleep(0.5)
+    status, body = api_call("/api/admin/archive?q=not%20archived", admin="test-admin")
+    ok("存档关掉后不再进库", status == 200 and body.get("count") == 0,
+       body.get("count"))
+
+    status, body = api_call("/api/admin/kick", "POST", {"call": "BG6TA"},
+                            admin="test-admin")
+    ok("踢一个呼号返回踢掉的条数", status == 200 and body.get("kicked", 0) >= 1, body)
+    observer.settimeout(2.0)
+    closed = False
+    while True:
+        try:
+            chunk = observer.recv(4096)
+        except (socket.timeout, OSError):
+            break
+        if not chunk:
+            closed = True
+            break
+    ok("被踢的连接从服务端断开", closed, "")
+    status, body = api_call("/api/admin/kick", "POST", {"call": "N0NONE"},
+                            admin="test-admin")
+    ok("踢不存在的呼号返回 0", status == 200 and body.get("kicked") == 0, body)
+
+    # ⑬ 撤销后连不上
     store.save_account("BG8XYZ", status="revoked")
     sock, reply = connect(node, "user BG8XYZ pass %d" % aprslib.passcode("BG8XYZ"),
                           needle="not authorized")
@@ -322,6 +374,7 @@ def test_end_to_end():
     for item in (a, observer, read_only, far):
         item.close()
     node.stop()
+    config.ARCHIVE_ENABLED = False
 
 
 def test_ingest():

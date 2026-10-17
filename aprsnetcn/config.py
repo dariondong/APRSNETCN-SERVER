@@ -40,6 +40,9 @@ QUEUE_LIMIT = _int("ACN_QUEUE_LIMIT", 128)
 RATE_LINES = _int("ACN_RATE_LINES", 60)             # 每连接每 10 秒
 RATE_WINDOW = _int("ACN_RATE_WINDOW", 10)
 
+# 控制台「报文检索」读的内存环，只留最近这么多行，重启就空
+RECENT_LINES = _int("ACN_RECENT_LINES", 600)
+
 # compat：passcode 不对只给收（与 APRS-IS 一致）
 # strict：passcode 必须对，否则拒绝
 # off   ：不校验 passcode，只看白名单
@@ -59,6 +62,11 @@ ADD_Q_CONSTRUCT = _text("ACN_ADD_Q_CONSTRUCT", "1") not in ("0", "false", "no", 
 # ── 24 小时台站 ──
 RETENTION_HOURS = _int("ACN_RETENTION_HOURS", 24)
 PURGE_SECONDS = _int("ACN_PURGE_SECONDS", 60)
+
+# ── 报文存档 ──
+# 草案 5.5 要求尽量不落盘，所以默认关。打开后整行报文进库，按 ARCHIVE_HOURS 删。
+ARCHIVE_ENABLED = _text("ACN_ARCHIVE_ENABLED", "0") not in ("0", "false", "no", "off", "")
+ARCHIVE_HOURS = _int("ACN_ARCHIVE_HOURS", 72)
 
 # ── HTTP：公开 API + 管理控制台 ──
 HTTP_HOST = _text("ACN_HTTP_HOST", "0.0.0.0")

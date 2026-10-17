@@ -13,7 +13,7 @@ import time
 from collections import deque
 
 from . import aprslib, auth, config, filters
-from .store import now_iso
+from .store import iso_of, now_iso
 
 LOGIN_RE = re.compile(r"^user\s+(\S+)\s+pass\s+(-?\d+)(.*)$", re.I)
 RF_ALIASES = aprslib.RF_ALIASES
@@ -186,6 +186,11 @@ class Hub:
         self.logins_failed = 0
         self.seen = {}
         self._seen_lock = threading.Lock()
+        # 控制台用的两块内存：最近报文环 + 24 个小时桶（收/发）
+        self.recent = deque(maxlen=max(1, config.RECENT_LINES))
+        self._recent_lock = threading.Lock()
+        self.hourly = {}
+        self.kicked = 0
 
     # ── 启停 ──
     def start(self):
@@ -228,6 +233,27 @@ class Hub:
             clients = list(self.clients)
         for client in clients:
             client.close()
+
+    def kick(self, call):
+        """踢掉某个呼号的连接。写全 SSID 就只断那一条，只写主呼号断一家。"""
+        call = (call or "").upper().strip()
+        if not call:
+            return 0
+        exact = "-" in call
+        with self.lock:
+            targets = [client for client in self.clients
+                       if (client.call.upper() == call if exact
+                           else client.call.upper().split("-")[0] == call)]
+        for client in targets:
+            client.send("# aprsnetcn: disconnected by admin")
+        if targets:
+            time.sleep(0.2)                       # 让写线程把上面那句送出去
+        for client in targets:
+            client.close()
+        if targets:
+            self.kicked += len(targets)
+            self.store.audit("kick", {"call": call, "count": len(targets)})
+        return len(targets)
 
     def _accept(self, sock):
         while self.running:
@@ -404,6 +430,7 @@ class Hub:
             client.ctx.lat, client.ctx.lon = pkt.lat, pkt.lon
         client.received += 1
         self.packets_in += 1
+        self.note("in", text, pkt)
         via = via_of(pkt)
         self.store.record_position(pkt, via=via, src_call=client.call)
         out = with_q_construct(text, client.call) if config.ADD_Q_CONSTRUCT else text
@@ -418,15 +445,70 @@ class Hub:
             self.seen[digest] = now
         with self.lock:
             clients = list(self.clients)
+        sent = 0
         for client in clients:
             if client is origin or not client.alive:
                 continue
             try:
                 if client.match(pkt):
                     client.send(line)
-                    self.packets_out += 1
+                    sent += 1
             except Exception:                              # noqa: BLE001
                 continue
+        if sent:
+            with self.lock:
+                self.packets_out += sent
+            self.note("out", line, pkt, count=sent)
+
+    # ── 控制台：最近报文与收发桶 ──
+    def note(self, direction, line, pkt=None, count=1):
+        """记一行报文：进内存环，累加小时桶，存档开着就顺手落库。"""
+        now = int(time.time())
+        entry = {"time": iso_of(now), "ts": now, "dir": direction,
+                 "src": (pkt.src if pkt is not None else ""),
+                 "dst": (pkt.dst if pkt is not None else ""),
+                 "line": line}
+        hour = now - now % 3600
+        with self._recent_lock:
+            self.recent.append(entry)
+            bucket = self.hourly.setdefault(hour, [0, 0])
+            bucket[0 if direction == "in" else 1] += count
+        if config.ARCHIVE_ENABLED:
+            try:
+                self.store.archive(entry, now)
+            except Exception:                              # noqa: BLE001
+                pass
+
+    def lines(self, query="", direction="", limit=200):
+        needle = (query or "").lower()
+        direction = (direction or "").lower()
+        limit = max(1, min(500, int(limit or 200)))
+        with self._recent_lock:
+            items = list(self.recent)
+        out = []
+        for item in reversed(items):
+            if direction in ("in", "out") and item["dir"] != direction:
+                continue
+            if needle and needle not in item["line"].lower() \
+                    and needle not in item["src"].lower() \
+                    and needle not in item["dst"].lower():
+                continue
+            out.append(item)
+            if len(out) >= limit:
+                break
+        return out
+
+    def hourly_rows(self, hours=24):
+        """最近 hours 个小时桶，旧的补 0，新的在前。"""
+        now = int(time.time())
+        current = now - now % 3600
+        rows = []
+        with self._recent_lock:
+            for step in range(int(hours)):
+                hour = current - step * 3600
+                packet = self.hourly.get(hour) or [0, 0]
+                rows.append({"hour": iso_of(hour), "in": packet[0], "out": packet[1]})
+        return rows
 
     def _sweep(self):
         while self.running:
@@ -436,6 +518,16 @@ class Hub:
                 for digest, stamp in list(self.seen.items()):
                     if now - stamp > 30:
                         self.seen.pop(digest, None)
+            with self._recent_lock:
+                edge = int(now) - int(now) % 3600 - 24 * 3600
+                for hour in list(self.hourly):
+                    if hour < edge:
+                        self.hourly.pop(hour, None)
+            if config.ARCHIVE_ENABLED:
+                try:
+                    self.store.purge_archive(config.ARCHIVE_HOURS)
+                except Exception:                          # noqa: BLE001
+                    pass
 
     # ── 状态 ──
     def stats(self):
@@ -450,6 +542,11 @@ class Hub:
             "packets_out": self.packets_out,
             "logins_ok": self.logins_ok,
             "logins_failed": self.logins_failed,
+            "kicked": self.kicked,
+            "recent": len(self.recent),
+            "hourly": self.hourly_rows(),
+            "archive": {"enabled": config.ARCHIVE_ENABLED,
+                        "hours": config.ARCHIVE_HOURS},
             "ports": [config.TCP_PORT] + ([config.TCP_PORT_TLS] if config.TCP_PORT_TLS else []),
         }
 

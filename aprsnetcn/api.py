@@ -212,6 +212,12 @@ def _handler_class(api):
                     return self._station(path.rsplit("/", 1)[-1])
                 if path == "/api/admin/state":
                     return self._admin_state()
+                if path == "/api/admin/clients":
+                    return self._admin_clients()
+                if path == "/api/admin/packets":
+                    return self._admin_packets(query)
+                if path == "/api/admin/archive":
+                    return self._admin_archive(query)
                 if path == "/api/admin/whitelist":
                     return self._admin_whitelist()
                 if path == "/api/manager/whitelist/status":
@@ -232,6 +238,8 @@ def _handler_class(api):
                     return self._admin_delete()
                 if path == "/api/admin/publish":
                     return self._admin_publish()
+                if path == "/api/admin/kick":
+                    return self._admin_kick()
                 if path == "/api/manager/whitelist":
                     return self._manager_publish()
                 return self._json(404, {"error": "not-found"})
@@ -412,10 +420,56 @@ def _handler_class(api):
                     "src_policy": config.SRC_POLICY,
                     "station_count": api.store.station_count(),
                     "public_url": config.PUBLIC_URL,
+                    "archive": {"enabled": config.ARCHIVE_ENABLED,
+                                "hours": config.ARCHIVE_HOURS,
+                                "lines": api.store.archive_count()},
                     "ingest": api.ingest.stats() if api.ingest else {"enabled": False},
                 },
                 "time": now,
             })
+
+        def _admin_clients(self):
+            if not self._admin_ok():
+                return self._json(401, {"error": "unauthorized"})
+            stats = api.hub.stats()
+            self._json(200, {"ok": True, "count": len(stats["clients"]),
+                             "clients": stats["clients"], "max_conn": config.MAX_CONN})
+
+        def _admin_kick(self):
+            if not self._admin_ok():
+                return self._json(401, {"error": "unauthorized"})
+            body = self._body()
+            call = (body.get("call") or "").upper().strip()
+            if not call:
+                return self._json(400, {"error": "bad-call"})
+            kicked = api.hub.kick(call)
+            self._json(200, {"ok": True, "call": call, "kicked": kicked})
+
+        def _admin_packets(self, query):
+            if not self._admin_ok():
+                return self._json(401, {"error": "unauthorized"})
+            source = "recent"
+            try:
+                limit = int((query.get("limit") or ["100"])[0])
+            except ValueError:
+                return self._json(400, {"error": "bad-limit"})
+            lines = api.hub.lines((query.get("q") or [""])[0],
+                                  (query.get("dir") or [""])[0], limit)
+            self._json(200, {"ok": True, "source": source, "count": len(lines),
+                             "capacity": config.RECENT_LINES, "lines": lines})
+
+        def _admin_archive(self, query):
+            if not self._admin_ok():
+                return self._json(401, {"error": "unauthorized"})
+            try:
+                limit = int((query.get("limit") or ["100"])[0])
+            except ValueError:
+                return self._json(400, {"error": "bad-limit"})
+            lines = api.store.archive_search((query.get("q") or [""])[0],
+                                             (query.get("dir") or [""])[0], limit)
+            self._json(200, {"ok": True, "source": "archive", "enabled": config.ARCHIVE_ENABLED,
+                             "hours": config.ARCHIVE_HOURS, "total": api.store.archive_count(),
+                             "count": len(lines), "lines": lines})
 
         def _admin_account(self):
             if not self._admin_ok():

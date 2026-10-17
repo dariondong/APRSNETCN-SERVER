@@ -105,6 +105,33 @@ GET /api/public/stations/{call}     单台站与轨迹
 - `GET /api/v1/health` 运行状态：连接数、收发报文数、24 小时台站数。
 - `GET /api/v1/version` 协议版本与服务端实际策略（passcode 模式、保留时长）。
 
+## 管理接口
+
+控制台和脚本都用 `X-ACN-Token: <ACN_ADMIN_PASSWORD>` 调这几条。
+
+```
+GET  /api/admin/state                   账号、审计、总计数
+GET  /api/admin/clients                 在线连接
+POST /api/admin/kick                    {"call":"BG7LZQ-2"} 踢掉这个呼号
+GET  /api/admin/packets?q=&dir=&limit=  最近的内存环
+GET  /api/admin/archive?q=&dir=&limit=  存档，开了才有
+```
+
+`/api/admin/clients` 一条连接一行：呼号、来源地址、`verified`、是否只收、客户端版本、
+连上时间、收与发的条数、被丢掉的积压、登录时生效的过滤器。
+
+`kick` 写全 `BG7LZQ-2` 就只断那一条，只写 `BG7LZQ` 会把它下面所有 SSID 的连接一起断开。
+被踢的连接会记一条审计。
+
+报文检索的 `dir` 是 `in` 或 `out`，不填两条都看。`q` 在整行报文、源呼号、收件人里找。
+内存环只留最近 `ACN_RECENT_LINES` 行（默认 600），重启就空。
+
+## 报文存档
+
+默认关。要开就在 `/etc/aprsnetcn.env` 里写 `ACN_ARCHIVE_ENABLED=1` 再重启。
+`ACN_ARCHIVE_HOURS` 决定留多久，默认 72 小时。开着时每一行进出的报文都写进 `archive` 表，
+过期的在后台删掉；关掉时 `GET /api/admin/archive` 仍然能调，只是库是空的。
+
 ## 错误
 
 | 状态码 | `error` | 含义 |

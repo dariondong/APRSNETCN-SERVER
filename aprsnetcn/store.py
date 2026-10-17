@@ -39,6 +39,16 @@ SCHEMA = (
     )""",
     "CREATE INDEX IF NOT EXISTS positions_ts ON positions(ts)",
     "CREATE INDEX IF NOT EXISTS positions_call_ts ON positions(call, ts)",
+    """CREATE TABLE IF NOT EXISTS archive (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        dir TEXT NOT NULL,
+        src TEXT,
+        dst TEXT,
+        line TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS archive_ts ON archive(ts)",
+    "CREATE INDEX IF NOT EXISTS archive_src_ts ON archive(src, ts)",
     """CREATE TABLE IF NOT EXISTS audit (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER NOT NULL,
@@ -210,6 +220,48 @@ class Store:
             cursor = self._db.execute("DELETE FROM positions WHERE ts < ?", (edge,))
             self._db.commit()
         return cursor.rowcount
+
+    # ── 报文存档（默认关，见 config.ARCHIVE_ENABLED）──
+    def archive(self, entry, now=None):
+        stamp = int(now if now is not None else datetime.now(timezone.utc).timestamp())
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO archive (ts, dir, src, dst, line) VALUES (?,?,?,?,?)",
+                (stamp, entry.get("dir") or "in", (entry.get("src") or "")[:24],
+                 (entry.get("dst") or "")[:16], (entry.get("line") or "")[:512]))
+            self._db.commit()
+
+    def purge_archive(self, hours=72, now=None):
+        stamp = int(now if now is not None else datetime.now(timezone.utc).timestamp())
+        edge = stamp - int(hours * 3600)
+        with self._lock:
+            cursor = self._db.execute("DELETE FROM archive WHERE ts < ?", (edge,))
+            self._db.commit()
+        return cursor.rowcount
+
+    def archive_search(self, query="", direction="", limit=200, now=None):
+        direction = (direction or "").lower()
+        sql = ["SELECT * FROM archive WHERE 1=1"]
+        args = []
+        if direction in ("in", "out"):
+            sql.append("AND dir = ?")
+            args.append(direction)
+        needle = (query or "").strip()
+        if needle:
+            sql.append("AND (line LIKE ? OR src LIKE ? OR dst LIKE ?)")
+            args.extend(["%" + needle + "%"] * 3)
+        sql.append("ORDER BY id DESC LIMIT ?")
+        args.append(max(1, min(500, int(limit or 200))))
+        with self._lock:
+            rows = self._db.execute(" ".join(sql), args).fetchall()
+        return [{"id": row["id"], "time": iso_of(row["ts"]), "dir": row["dir"],
+                 "src": row["src"] or "", "dst": row["dst"] or "",
+                 "line": row["line"] or ""} for row in rows]
+
+    def archive_count(self, now=None):
+        with self._lock:
+            row = self._db.execute("SELECT COUNT(*) AS n FROM archive").fetchone()
+        return row["n"] if row else 0
 
     def stations(self, window_hours=24, since=None, bbox=None, limit=500,
                  offset=0, now=None):
