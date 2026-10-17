@@ -263,6 +263,12 @@ class Store:
             row = self._db.execute("SELECT COUNT(*) AS n FROM archive").fetchone()
         return row["n"] if row else 0
 
+    def quick_check(self):
+        """启动自检用：SQLite 自己查一遍库，正常返回 ok。"""
+        with self._lock:
+            row = self._db.execute("PRAGMA quick_check").fetchone()
+        return (row[0] if row else "unknown")
+
     def stations(self, window_hours=24, since=None, bbox=None, limit=500,
                  offset=0, now=None):
         stamp = int(now if now is not None else datetime.now(timezone.utc).timestamp())

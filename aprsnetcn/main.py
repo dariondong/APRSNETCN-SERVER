@@ -30,6 +30,23 @@ def bootstrap(store):
     store.audit("bootstrap", {"call": call, "has_password": bool(config.BOOTSTRAP_PASSWORD)})
 
 
+def self_check(store):
+    """草案 7.4：起来先验数据，再把端口交出去。"""
+    report = {"db": "unknown", "accounts": 0, "version": 0, "last_sync": None}
+    try:
+        report["db"] = store.quick_check()
+    except Exception as error:                             # noqa: BLE001
+        report["db"] = "failed: %s" % error
+    report["accounts"] = len(store.accounts())
+    report["version"] = store.whitelist_version()
+    report["last_sync"] = store.meta("whitelist_synced_at")
+    store.audit("startup-check", report)
+    print("启动自检：库 %s，名单 %d 条、版本 %s、最近同步 %s"
+          % (report["db"], report["accounts"], report["version"],
+             report["last_sync"] or "无"), flush=True)
+    return report
+
+
 def purge_loop(store, stop):
     while not stop.is_set():
         try:
@@ -46,6 +63,7 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     store = Store(config.DB_PATH)
     bootstrap(store)
+    self_check(store)
     node = hub_module.Hub(store)
     node.start()
     feeder = Ingest(store, node)

@@ -56,6 +56,9 @@ SRC_POLICY = _text("ACN_SRC_POLICY", "warn").lower()
 # required：必须带 auth 才放行
 AUTH_MODE = _text("ACN_AUTH_MODE", "optional").lower()
 
+# 草案 4.6：名单超过这么多小时没同步过就不再放行新连接。0 = 不限制。
+WHITELIST_MAX_AGE_HOURS = _int("ACN_WHITELIST_MAX_AGE_HOURS", 0)
+
 # 客户端报文是否补 q 构造（qAC,登录呼号），与 APRS-IS 的行为一致
 ADD_Q_CONSTRUCT = _text("ACN_ADD_Q_CONSTRUCT", "1") not in ("0", "false", "no", "off")
 

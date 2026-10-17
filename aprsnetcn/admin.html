@@ -168,7 +168,9 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       ['收报文', stats.packets_in],
       ['发报文', stats.packets_out],
       ['24h 台站', meta.station_count],
-      ['名单版本', meta.whitelist_version],
+      ['名单', meta.whitelist_version + (meta.whitelist_synced_at
+        ? ' / 同步 ' + stamp(meta.whitelist_synced_at) : ' / 未同步')],
+      ['管理拒绝', meta.admin_denied || 0],
       ['端口', (stats.ports || []).join(' / ')]
     ];
     var archive = meta.archive || {};

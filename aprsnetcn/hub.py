@@ -339,6 +339,11 @@ class Hub:
         if not allowed:
             self._reject(client, reason)
             return False
+        # 4b. 名单过期没同步（草案 4.6）
+        if not auth.whitelist_fresh(self.store.meta("whitelist_synced_at"),
+                                    config.WHITELIST_MAX_AGE_HOURS, auth_now()):
+            self._reject(client, "whitelist-stale")
+            return False
         # 5. 账号与密码（设了口令的记录）
         if record.get("pass_hash"):
             if login.account or login.password:

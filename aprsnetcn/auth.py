@@ -7,7 +7,9 @@ import hmac
 import json
 import os
 import secrets
+from datetime import datetime, timedelta, timezone
 
+BEIJING = timezone(timedelta(hours=8))
 PBKDF2_ROUNDS = 120000
 STATUSES = ("pending", "authorized", "expired", "suspended", "revoked")
 OPEN_STATUSES = ("pending", "authorized")   # 会按有效期自动算过期
@@ -58,6 +60,24 @@ def may_login(record, now):
     if status != "authorized":
         return False, status
     return True, "ok"
+
+
+def whitelist_fresh(synced, hours, now=None):
+    """草案 4.6：名单太久没同步就不该再当成有效。hours<=0 表示不限制。"""
+    if not hours or int(hours) <= 0:
+        return True
+    if not synced:
+        return False
+    try:
+        then = datetime.fromisoformat(str(synced))
+    except ValueError:
+        return False
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=BEIJING)
+    moment = datetime.fromisoformat(now) if now else datetime.now(BEIJING)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=BEIJING)
+    return moment - then <= timedelta(hours=int(hours))
 
 
 def canonical(payload):

@@ -52,6 +52,7 @@ os.environ.update({
 from aprsnetcn import api, aprslib, auth, config, filters  # noqa: E402
 from aprsnetcn.hub import Hub  # noqa: E402
 from aprsnetcn.ingest import Ingest  # noqa: E402
+from aprsnetcn.main import self_check  # noqa: E402
 from aprsnetcn.store import Store, now_iso  # noqa: E402
 
 PASSED = []
@@ -364,7 +365,56 @@ def test_end_to_end():
                             admin="test-admin")
     ok("踢不存在的呼号返回 0", status == 200 and body.get("kicked") == 0, body)
 
-    # ⑬ 撤销后连不上
+    # ⑭ 草案 4.5：名单改了，已经建好的连接要断
+    rev, reply = connect(node, "user BG6TA pass %d vers APRSLocus 2.1.11"
+                         % aprslib.passcode("BG6TA"))
+    ok("改名单前能正常连上", "logresp BG6TA verified" in reply, reply.strip())
+    status, body = api_call("/api/admin/account", "POST",
+                            {"call": "BG6TA", "status": "revoked"}, admin="test-admin")
+    ok("改名单时把该断的连接断掉",
+       status == 200 and "BG6TA" in (body.get("dropped") or []), body.get("dropped"))
+    rev.settimeout(2.0)
+    closed = False
+    while True:
+        try:
+            chunk = rev.recv(4096)
+        except (socket.timeout, OSError):
+            break
+        if not chunk:
+            closed = True
+            break
+    ok("被撤销的连接确实断开", closed, "")
+    rev.close()
+    store.save_account("BG6TA", status="authorized")
+
+    # ⑮ 草案 4.6：名单太久没同步就不再放行新连接
+    old_sync = store.meta("whitelist_synced_at")
+    config.WHITELIST_MAX_AGE_HOURS = 1
+    store.set_meta("whitelist_synced_at", "2026-01-01T00:00:00+08:00")
+    stale, reply = connect(node, "user BG7LZQ pass %d" % code, needle="not authorized")
+    ok("名单过期没同步时拒新连接", "whitelist-stale" in reply, reply.strip())
+    stale.close()
+    config.WHITELIST_MAX_AGE_HOURS = 0
+    store.set_meta("whitelist_synced_at", old_sync or now_iso())
+    fresh, reply = connect(node, "user BG7LZQ pass %d" % code)
+    ok("不限制时照常登录", "logresp BG7LZQ verified" in reply, reply.strip())
+    fresh.close()
+
+    # ⑯ 草案 7.3 / 7.4：管理拒绝留痕、启动自检、版本接口公布策略
+    api_call("/api/admin/state", admin="wrong")
+    status, state_body = api_call("/api/admin/state", admin="test-admin")
+    kinds = [row["kind"] for row in state_body.get("audits") or []]
+    ok("管理口令错也记一条审计", "admin-denied" in kinds, kinds[:6])
+    ok("控制台带出拒绝计数", state_body["meta"].get("admin_denied", 0) >= 1,
+       state_body["meta"].get("admin_denied"))
+    report = self_check(store)
+    ok("启动自检把库查一遍", report["db"] == "ok", report)
+    status, version_body = api_call("/api/v1/version")
+    ok("版本接口公布默认订阅策略",
+       version_body.get("default_filter") == "all"
+       and "r" in (version_body.get("filters") or []), version_body)
+
+    # ⑰ 撤销后连不上
     store.save_account("BG8XYZ", status="revoked")
     sock, reply = connect(node, "user BG8XYZ pass %d" % aprslib.passcode("BG8XYZ"),
                           needle="not authorized")

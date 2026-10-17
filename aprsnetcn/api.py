@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, auth, config, hub as hub_module, store as store_module
+from . import __version__, auth, config, filters, hub as hub_module, store as store_module
 
 BEIJING = store_module.BEIJING
 
@@ -27,6 +27,24 @@ class Api:
         self.lock = threading.Lock()
         self.rate = {}
         self.public_rate = {}
+        self.admin_denied = 0
+
+    def enforce_whitelist(self, reason="whitelist-changed"):
+        """草案 4.5：名单变了就把已经建好、现在不该放行的连接断掉。"""
+        now = store_module.now_iso()
+        with self.hub.lock:
+            live = sorted({client.call for client in self.hub.clients if client.call})
+        dropped = []
+        for call in live:
+            record = self.store.account(call.split("-")[0]) or self.store.account(call)
+            allowed, _why = auth.may_login(record, now)
+            if not allowed:
+                dropped.append(call)
+        for call in dropped:
+            self.hub.kick(call)
+        if dropped:
+            self.store.audit("revoked-disconnect", {"calls": dropped, "reason": reason})
+        return dropped
 
     # ── token ──
     def issue(self, call):
@@ -176,7 +194,13 @@ def _handler_class(api):
         def _admin_ok(self):
             if not config.ADMIN_PASSWORD:
                 return False
-            return auth.constant_equal(self.headers.get("X-ACN-Token"), config.ADMIN_PASSWORD)
+            if auth.constant_equal(self.headers.get("X-ACN-Token"), config.ADMIN_PASSWORD):
+                return True
+            # 草案 7.3：管理操作被拒也该留痕
+            api.admin_denied += 1
+            api.store.audit("admin-denied", {"path": urlparse(self.path).path,
+                                             "address": self.client_address[0]})
+            return False
 
         # ── 路由 ──
         def do_OPTIONS(self):
@@ -304,7 +328,12 @@ def _handler_class(api):
                 "server": config.SERVER_ID,
                 "retention_hours": config.RETENTION_HOURS,
                 "passcode_mode": config.PASSCODE_MODE,
+                "src_policy": config.SRC_POLICY,
+                "auth_mode": config.AUTH_MODE,
+                "whitelist_max_age_hours": config.WHITELIST_MAX_AGE_HOURS,
+                "default_filter": "all",
                 "login_extensions": ["vers", "auth", "filter"],
+                "filters": list(filters.KNOWN),
             })
 
         def _openapi(self):
@@ -420,6 +449,10 @@ def _handler_class(api):
                     "src_policy": config.SRC_POLICY,
                     "station_count": api.store.station_count(),
                     "public_url": config.PUBLIC_URL,
+                    "whitelist_synced_at": api.store.meta("whitelist_synced_at"),
+                    "whitelist_max_age_hours": config.WHITELIST_MAX_AGE_HOURS,
+                    "admin_denied": api.admin_denied,
+                    "default_filter": "all",
                     "archive": {"enabled": config.ARCHIVE_ENABLED,
                                 "hours": config.ARCHIVE_HOURS,
                                 "lines": api.store.archive_count()},
@@ -500,8 +533,10 @@ def _handler_class(api):
             )
             version = api.store.bump_whitelist_version()
             api.store.audit("account-saved", {"call": call, "version": version})
+            dropped = api.enforce_whitelist("account-saved")
             record.pop("pass_hash", None)
-            self._json(200, {"ok": True, "account": record, "version": version})
+            self._json(200, {"ok": True, "account": record, "version": version,
+                             "dropped": dropped})
 
         def _admin_delete(self):
             if not self._admin_ok():
@@ -512,7 +547,9 @@ def _handler_class(api):
             version = api.store.bump_whitelist_version()
             api.store.audit("account-deleted", {"call": call, "removed": removed,
                                                 "version": version})
-            self._json(200, {"ok": True, "removed": removed, "version": version})
+            dropped = api.enforce_whitelist("account-deleted")
+            self._json(200, {"ok": True, "removed": removed, "version": version,
+                             "dropped": dropped})
 
         def _admin_whitelist(self):
             if not self._admin_ok():
@@ -563,7 +600,8 @@ def _handler_class(api):
             api.store.set_meta("whitelist_synced_at", store_module.now_iso())
             api.store.audit("whitelist-synced", {"version": version, "mode": mode,
                                                  "records": count})
+            dropped = api.enforce_whitelist("whitelist-synced")
             self._json(200, {"ok": True, "version": version, "records": count,
-                             "mode": mode})
+                             "mode": mode, "dropped": dropped})
 
     return Handler

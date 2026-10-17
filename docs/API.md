@@ -103,7 +103,9 @@ GET /api/public/stations/{call}     单台站与轨迹
 ## 不用鉴权的两个
 
 - `GET /api/v1/health` 运行状态：连接数、收发报文数、24 小时台站数。
-- `GET /api/v1/version` 协议版本与服务端实际策略（passcode 模式、保留时长）。
+- `GET /api/v1/version` 协议版本与服务端实际策略：`passcode_mode`、`src_policy`、`auth_mode`、
+  `retention_hours`、`whitelist_max_age_hours`、`default_filter`（没带过滤器的连接收全部报文）、
+  `filters`（认得的过滤器前缀）。
 
 ## 管理接口
 
@@ -119,6 +121,8 @@ GET  /api/admin/archive?q=&dir=&limit=  存档，开了才有
 
 `/api/admin/clients` 一条连接一行：呼号、来源地址、`verified`、是否只收、客户端版本、
 连上时间、收与发的条数、被丢掉的积压、登录时生效的过滤器。
+
+管理口令错也会记一条 `admin-denied` 审计，控制台的「管理拒绝」就是这个计数。
 
 `kick` 写全 `BG7LZQ-2` 就只断那一条，只写 `BG7LZQ` 会把它下面所有 SSID 的连接一起断开。
 被踢的连接会记一条审计。
@@ -139,7 +143,7 @@ GET  /api/admin/archive?q=&dir=&limit=  存档，开了才有
 | 400 | `bad-bbox` / `bad-since` / `bad-limit` | 参数写错 |
 | 401 | `unauthorized` | 没带 token 或已过期 |
 | 401 | `bad-credentials` | 账号或密码不对 |
-| 403 | `not-authorized` | 名单里没有，或授权已过期、已暂停、已撤销 |
+| 403 | `not-authorized` | 名单里没有，或授权已过期、已暂停、已撤销；名单过期没同步时 `reason` 是 `whitelist-stale` |
 | 404 | `not-found` | 台站不在 24 小时窗口里 |
 | 429 | `rate-limited` | 这个 IP 调公开接口太密（`/api/public/*`） |
 | 429 | `rate-limited` | 这个 token 请求太密 |
