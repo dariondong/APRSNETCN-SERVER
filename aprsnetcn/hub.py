@@ -16,20 +16,8 @@ from . import aprslib, auth, config, filters
 from .store import now_iso
 
 LOGIN_RE = re.compile(r"^user\s+(\S+)\s+pass\s+(-?\d+)(.*)$", re.I)
-RF_ALIASES = ("WIDE", "RELAY", "TRACE", "GATE", "SGATE", "RFONLY", "NOGATE")
-
-
-def via_of(pkt):
-    """这条报文算走射频还是走网络。"""
-    for entry in pkt.path:
-        head = entry.split("*")[0]
-        if head in ("qAR", "qAr"):
-            return "rf"
-    for entry in pkt.path:
-        head = entry.split("*")[0].upper()
-        if any(head.startswith(alias) for alias in RF_ALIASES):
-            return "rf"
-    return "is"
+RF_ALIASES = aprslib.RF_ALIASES
+via_of = aprslib.via_of
 
 
 def with_q_construct(line, call):

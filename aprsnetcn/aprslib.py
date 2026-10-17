@@ -211,6 +211,21 @@ def _compressed(pkt, body):
         pkt.alt = float(int(alt.group(1)))
 
 
+RF_ALIASES = ("WIDE", "RELAY", "TRACE", "GATE", "SGATE", "RFONLY", "NOGATE")
+
+
+def via_of(pkt):
+    """这条报文算走射频还是走网络：看路径里的 q 构造与中继别名。"""
+    for entry in pkt.path:
+        if entry.split("*")[0].upper() == "QAR":
+            return "rf"
+    for entry in pkt.path:
+        head = entry.split("*")[0].upper()
+        if any(head.startswith(alias) for alias in RF_ALIASES):
+            return "rf"
+    return "is"
+
+
 def distance_km(lat1, lon1, lat2, lon2):
     """两点间球面距离（公里）。"""
     if None in (lat1, lon1, lat2, lon2):

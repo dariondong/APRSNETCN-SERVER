@@ -32,6 +32,7 @@ def free_port():
 DATA_DIR = tempfile.mkdtemp(prefix="acn-")
 TCP_PORT = free_port()
 HTTP_PORT = free_port()
+UPSTREAM_PORT = free_port()
 os.environ.update({
     "ACN_DATA_DIR": DATA_DIR,
     "ACN_TCP_HOST": "127.0.0.1",
@@ -41,10 +42,16 @@ os.environ.update({
     "ACN_ADMIN_PASSWORD": "test-admin",
     "ACN_MANAGER_SECRET": "manager-secret",
     "ACN_RETENTION_HOURS": "24",
+    "ACN_INGEST_ENABLED": "1",
+    "ACN_INGEST_HOST": "127.0.0.1",
+    "ACN_INGEST_PORT": str(UPSTREAM_PORT),
+    "ACN_INGEST_LOGIN": "BG7LZQ",
+    "ACN_INGEST_FILTER": "r/35/105/2000",
 })
 
 from aprsnetcn import api, aprslib, auth, config, filters  # noqa: E402
 from aprsnetcn.hub import Hub  # noqa: E402
+from aprsnetcn.ingest import Ingest  # noqa: E402
 from aprsnetcn.store import Store, now_iso  # noqa: E402
 
 PASSED = []
@@ -282,11 +289,53 @@ def test_end_to_end():
     node.stop()
 
 
+def test_ingest():
+    """起一个假的 APRS-IS，验只读拉取：登录行、收到报文进 24 小时库、不转发。"""
+    upstream = socket.socket()
+    upstream.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    upstream.bind(("127.0.0.1", UPSTREAM_PORT))
+    upstream.listen(1)
+    seen = {"login": ""}
+
+    def serve():
+        conn, _ = upstream.accept()
+        conn.settimeout(10)
+        buffer = b""
+        while b"\n" not in buffer:
+            chunk = conn.recv(4096)
+            if not chunk:
+                return
+            buffer += chunk
+        seen["login"] = buffer.decode("utf-8", "replace").strip()
+        conn.sendall(b"# javAPRSSrvr 4.1.0b04\r\n")
+        conn.sendall(b"# logresp BG7LZQ unverified, server T2TEST\r\n")
+        conn.sendall(b"BG6TA>APRS,TCPIP*,qAR,T2TEST:!3954.00N/11623.00E>from upstream\r\n")
+        time.sleep(3)
+        conn.close()
+
+    threading.Thread(target=serve, name="fake-is", daemon=True).start()
+    store = Store(config.DB_PATH)
+    feeder = Ingest(store)
+    feeder.start()
+    time.sleep(1.5)
+    ok("拉取登录行用 pass -1 只收", "pass -1" in seen["login"], seen["login"])
+    ok("拉取时带上了过滤器", "filter r/35/105/2000" in seen["login"])
+    data = store.station("BG6TA")
+    ok("上游的台站进了 24 小时库", data is not None, data and data.get("comment"))
+    ok("上游台站记了来自网络", data is not None and data.get("via") == "rf",
+       data and data.get("via"))
+    stats = feeder.stats()
+    ok("拉取统计里有条数", stats["stored"] >= 1, stats)
+    feeder.stop()
+    upstream.close()
+
+
 def main():
     test_passcode()
     test_parse()
     test_filters()
     test_end_to_end()
+    test_ingest()
     print("\n%d 项，过了 %d 项" % (len(PASSED) + len(FAILED), len(PASSED)))
     if FAILED:
         print("没过：" + "、".join(FAILED))

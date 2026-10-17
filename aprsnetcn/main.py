@@ -8,6 +8,7 @@ import threading
 import time
 
 from . import api, auth, config, hub as hub_module
+from .ingest import Ingest
 from .store import Store
 
 
@@ -47,7 +48,9 @@ def main(argv=None):
     bootstrap(store)
     node = hub_module.Hub(store)
     node.start()
-    server, api_state = api.make_server(store, node)
+    feeder = Ingest(store, node)
+    feeder.start()
+    server, api_state = api.make_server(store, node, feeder)
     threading.Thread(target=server.serve_forever, name="api", daemon=True).start()
     stop = threading.Event()
     threading.Thread(target=purge_loop, args=(store, stop), name="purge",
@@ -56,9 +59,14 @@ def main(argv=None):
     print("APRSNETCN SERVER %s 已启动：TCP %s，HTTP %s，API %s"
           % (config.PROTO_VERSION, ports, config.HTTP_PORT,
              "开" if config.ADMIN_PASSWORD else "关"), flush=True)
+    if config.INGEST_ENABLED:
+        print("外部数据：只读拉 %s:%d 的 %s"
+              % (config.INGEST_HOST, config.INGEST_PORT, config.INGEST_FILTER),
+              flush=True)
 
     def shutdown(signum, frame):                           # noqa: ARG001
         stop.set()
+        feeder.stop()
         node.stop()
         server.shutdown()
         store.audit("shutdown", {"signal": signum})

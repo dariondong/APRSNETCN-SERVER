@@ -61,6 +61,22 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 详细字段见 `docs/API.md`。
 
+## 外部数据（只读拉一份 APRS-IS）
+
+服务器自己的客户端不多时，24 小时台站列表会很空。可以把一份外部报文只读地拉进来补上，
+默认不转发给客户端。草案 8.2 要求引入外部数据必须写明来源与规则，所以这几项必须显式开：
+
+```bash
+ACN_INGEST_ENABLED=1
+ACN_INGEST_HOST=rotate.aprs2.net
+ACN_INGEST_PORT=14580
+ACN_INGEST_LOGIN=BG7LZQ          # 用来登录上游的呼号，只读
+ACN_INGEST_FILTER=r/35/105/2000 # 以 35N 105E 为圆心 2000 公里
+ACN_INGEST_FORWARD=0            # 1 才把外部报文转给客户端
+```
+
+`/api/v1/health` 里的 `ingest` 段能看到连上没、收了多少条、存了多少条、最后一次出错是什么。
+
 ## 测试
 
 ```bash

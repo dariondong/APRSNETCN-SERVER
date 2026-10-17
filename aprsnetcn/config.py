@@ -66,6 +66,15 @@ MANAGER_SECRET = _text("ACN_MANAGER_SECRET", "")    # 空 = 名单同步接口�
 TOKEN_TTL = _int("ACN_TOKEN_TTL", 12 * 3600)
 API_RATE_MINUTE = _int("ACN_API_RATE_MINUTE", 120)  # 每 token 每分钟
 
+# ── 外部数据：只读地拉一份 APRS-IS 的报文，补进 24 小时台站 ──
+# 草案 8.2：引入外部数据要明确来源与规则，所以默认关，打开时必须写清过滤器。
+INGEST_ENABLED = _text("ACN_INGEST_ENABLED", "0") not in ("0", "false", "no", "off", "")
+INGEST_HOST = _text("ACN_INGEST_HOST", "rotate.aprs2.net")
+INGEST_PORT = _int("ACN_INGEST_PORT", 14580)
+INGEST_LOGIN = _text("ACN_INGEST_LOGIN", "BG7LZQ")
+INGEST_FILTER = _text("ACN_INGEST_FILTER", "r/35/105/2000")
+INGEST_FORWARD = _text("ACN_INGEST_FORWARD", "0") not in ("0", "false", "no", "off", "")
+
 # ── 第一次启动时的引导账号（库里已有名单就忽略）──
 BOOTSTRAP_CALL = _text("ACN_BOOTSTRAP_CALL", "")
 BOOTSTRAP_ACCOUNT = _text("ACN_BOOTSTRAP_ACCOUNT", "")

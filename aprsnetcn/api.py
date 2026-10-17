@@ -17,11 +17,12 @@ BEIJING = store_module.BEIJING
 
 
 class Api:
-    """状态容器：store、hub、token、限流。"""
+    """状态容器：store、hub、ingest、token、限流。"""
 
-    def __init__(self, store, hub):
+    def __init__(self, store, hub, ingest=None):
         self.store = store
         self.hub = hub
+        self.ingest = ingest
         self.tokens = {}
         self.lock = threading.Lock()
         self.rate = {}
@@ -67,8 +68,8 @@ def _bbox(value):
     return numbers
 
 
-def make_server(store, hub):
-    api = Api(store, hub)
+def make_server(store, hub, ingest=None):
+    api = Api(store, hub, ingest)
     handler = _handler_class(api)
     server = ThreadingHTTPServer((config.HTTP_HOST, config.HTTP_PORT), handler)
     server.daemon_threads = True
@@ -205,6 +206,7 @@ def _handler_class(api):
                 "packets_out": stats["packets_out"],
                 "stations_24h": api.store.station_count(),
                 "positions_24h": api.store.position_count(),
+                "ingest": api.ingest.stats() if api.ingest else {"enabled": False},
                 "time": store_module.now_iso(),
             })
 
@@ -321,6 +323,7 @@ def _handler_class(api):
                     "src_policy": config.SRC_POLICY,
                     "station_count": api.store.station_count(),
                     "public_url": config.PUBLIC_URL,
+                    "ingest": api.ingest.stats() if api.ingest else {"enabled": False},
                 },
                 "time": now,
             })
