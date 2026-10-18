@@ -29,6 +29,12 @@ HEAD = '''"""TOCALL（目的呼号）→ 设备名查表（自动生成，勿手
 共 %d 条。
 """
 
+# 本项目自己的目的呼号（官方表里没有）。生成时会原样带进 tocalls.py，
+# 别改生成出来的文件 —— 改了下次重生成就没了。
+LOCALS = {
+    "APALOC": "APRSLocus",
+}
+
 TOCALLS = {
 '''
 
@@ -48,8 +54,9 @@ def main(src, dest=DEST):
     body = HEAD % len(pairs) + "\n".join(pairs) + '''
 }
 
-_EXACT = {key: name for key, name in TOCALLS.items()
-          if "?" not in key and not key.endswith("*")}
+_EXACT = dict(LOCALS)
+_EXACT.update({key: name for key, name in TOCALLS.items()
+          if "?" not in key and not key.endswith("*")})
 _PATTERNS = [(key, name) for key, name in TOCALLS.items()
              if "?" in key and not key.endswith("*")]
 _PREFIXES = [(key[:-1], name) for key, name in TOCALLS.items()

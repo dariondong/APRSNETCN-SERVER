@@ -675,6 +675,9 @@ def test_devices():
        tocalls.model_of("ZZZZZZ"))
     ok("带 ? 的键按位通配", tocalls.model_of("AP4RXX") != "",
        tocalls.model_of("AP4RXX"))
+    ok("APRSLocus 自己的目的呼号认得出",
+       tocalls.model_of("APALOC") == "APRSLocus",
+       tocalls.model_of("APALOC"))
     ok("台站详情带着目的呼号",
        (store.station("BG6TC", now=stamp + 10) or {}).get("to_call") == "ZZZZZZ")
 

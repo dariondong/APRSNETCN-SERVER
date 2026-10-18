@@ -8,6 +8,12 @@
 共 417 条。
 """
 
+# 本项目自己的目的呼号（官方表里没有）。生成时会原样带进 tocalls.py，
+# 别改生成出来的文件 —— 改了下次重生成就没了。
+LOCALS = {
+    "APALOC": "APRSLocus",
+}
+
 TOCALLS = {
     "AP1WWX": "T-238+ TAPR",
     "AP3VSS": "Active APRS tracker Artur Schreiber, SP3VSS",
@@ -428,8 +434,9 @@ TOCALLS = {
     "PSKAPR": "PSKmail Open Source",
 }
 
-_EXACT = {key: name for key, name in TOCALLS.items()
-          if "?" not in key and not key.endswith("*")}
+_EXACT = dict(LOCALS)
+_EXACT.update({key: name for key, name in TOCALLS.items()
+          if "?" not in key and not key.endswith("*")})
 _PATTERNS = [(key, name) for key, name in TOCALLS.items()
              if "?" in key and not key.endswith("*")]
 _PREFIXES = [(key[:-1], name) for key, name in TOCALLS.items()
