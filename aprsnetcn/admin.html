@@ -68,6 +68,29 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       <tbody id="clients"></tbody>
     </table></div>
 
+    <h2>台站（24 小时）</h2>
+    <div class="row">
+      <input id="stCall" placeholder="呼号，留空列全部">
+      <select id="stLimit">
+        <option value="100">最近 100 台</option>
+        <option value="300" selected>最近 300 台</option>
+        <option value="1000">最近 1000 台</option>
+      </select>
+      <button class="primary" id="stBtn" type="button">查</button>
+      <span class="note" id="stNote">台站数据不对外，这一块用管理口令看。</span>
+    </div>
+    <div class="tall"><table>
+      <thead><tr><th>呼号</th><th>最后收到</th><th>位置</th><th>来源</th><th>报文</th><th></th></tr></thead>
+      <tbody id="stations"></tbody>
+    </table></div>
+    <div id="stTrackBox" hidden>
+      <p class="note" id="stTrackNote"></p>
+      <div class="tall"><table>
+        <thead><tr><th>时间</th><th>纬度</th><th>经度</th><th>速度</th><th>航向</th></tr></thead>
+        <tbody id="stTrack"></tbody>
+      </table></div>
+    </div>
+
     <h2>报文检索</h2>
     <div class="row">
       <input id="qText" placeholder="呼号或报文片段">
@@ -94,6 +117,10 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       <thead><tr><th>呼号</th><th>账号</th><th>状态</th><th>有效期</th><th>口令</th><th></th></tr></thead>
       <tbody id="accounts"></tbody>
     </table>
+    <div class="row" style="margin-top:8px">
+      <button id="exportBtn" type="button">导出名单 JSON</button>
+      <span class="note" id="exportNote"></span>
+    </div>
 
     <h2>新增 / 修改</h2>
     <div class="grid">
@@ -171,7 +198,12 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       ['名单', meta.whitelist_version + (meta.whitelist_synced_at
         ? ' / 同步 ' + stamp(meta.whitelist_synced_at) : ' / 未同步')],
       ['管理拒绝', meta.admin_denied || 0],
-      ['端口', (stats.ports || []).join(' / ')]
+      ['端口', (stats.ports || []).join(' / ')],
+      ['台站数据', meta.public_api ? '对外' : '不对外'],
+      ['passcode', meta.passcode_mode],
+      ['来源策略', meta.src_policy],
+      ['账号鉴权', meta.auth_mode],
+      ['位置保留', meta.retention_hours + ' 小时']
     ];
     var archive = meta.archive || {};
     rows.push(['报文存档', archive.enabled ? (archive.lines + ' 行 / ' + archive.hours + ' 小时')
@@ -197,7 +229,10 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       'GET  /api/admin/clients',
       'POST /api/admin/kick    {"call":"BG7LZQ-2"}',
       'GET  /api/admin/packets ?q=&dir=in|out&limit=100',
-      'GET  /api/admin/archive ?q=&dir=in|out&limit=100'
+      'GET  /api/admin/archive ?q=&dir=in|out&limit=100',
+      'GET  /api/admin/stations ?window=24h&limit=300',
+      'GET  /api/admin/stations/{call}',
+      'GET  /api/admin/whitelist'
     ].join('\n');
   }
 
@@ -255,6 +290,69 @@ button.danger { color:var(--hot); border-color:var(--hot); }
     }
   }
 
+  function num(value, digits) {
+    return (typeof value === 'number') ? value.toFixed(digits) : '—';
+  }
+
+  function loadStations() {
+    var call_ = el('stCall').value.trim().toUpperCase();
+    var path = call_ ? ('/api/admin/stations/' + encodeURIComponent(call_))
+      : ('/api/admin/stations?window=24h&limit=' + el('stLimit').value);
+    call(path).then(function (body) {
+      if (call_) {
+        paintStations([body]);
+        el('stNote').textContent = '单台站：' + body.call + '，' + body.packets + ' 个位置。';
+        loadTrack(body.call);
+      } else {
+        paintStations(body.stations || []);
+        el('stNote').textContent = body.count + ' 台，' + body.window +
+          ' 窗口，' + stamp(body.updated) + ' 取的这一份。';
+        el('stTrackBox').hidden = true;
+      }
+    }).catch(function (error) {
+      el('stNote').textContent = '查失败：' + error.message;
+    });
+  }
+
+  function paintStations(rows) {
+    var html = '';
+    rows.forEach(function (row) {
+      html += '<tr>' +
+        '<td class="mono">' + esc(row.call) + '</td>' +
+        '<td class="mono">' + stamp(row.last_seen) + '</td>' +
+        '<td class="mono">' + num(row.lat, 4) + ', ' + num(row.lon, 4) + '</td>' +
+        '<td>' + (row.via === 'rf' ? '<span class="ok">射频</span>' : '网络') + '</td>' +
+        '<td class="mono">' + row.packets + '</td>' +
+        '<td><button data-track="' + esc(row.call) + '" type="button">轨迹</button></td>' +
+        '</tr>';
+    });
+    el('stations').innerHTML = html ||
+      '<tr><td colspan="6" class="note">24 小时里没有台站</td></tr>';
+  }
+
+  function loadTrack(call_) {
+    call('/api/admin/stations/' + encodeURIComponent(call_)).then(function (body) {
+      var rows = body.track || [];
+      var html = '';
+      rows.forEach(function (row) {
+        html += '<tr>' +
+          '<td class="mono">' + stamp(row.time) + '</td>' +
+          '<td class="mono">' + num(row.lat, 5) + '</td>' +
+          '<td class="mono">' + num(row.lon, 5) + '</td>' +
+          '<td class="mono">' + num(row.speed, 0) + '</td>' +
+          '<td class="mono">' + num(row.course, 0) + '</td>' +
+          '</tr>';
+      });
+      el('stTrack').innerHTML = html ||
+        '<tr><td colspan="5" class="note">没有轨迹点</td></tr>';
+      el('stTrackNote').textContent = call_ + '：' + rows.length + ' 个点' +
+        (body.comment ? '，「' + body.comment + '」' : '');
+      el('stTrackBox').hidden = false;
+    }).catch(function (error) {
+      el('stNote').textContent = '轨迹没取到：' + error.message;
+    });
+  }
+
   function search() {
     var scope = el('qScope').value;
     var query = '?q=' + encodeURIComponent(el('qText').value.trim()) +
@@ -273,8 +371,9 @@ button.danger { color:var(--hot); border-color:var(--hot); }
         '<td class="mono">' + esc(row.account || '') + '</td>' +
         '<td><span class="tag">' + esc(row.effective || row.status) + '</span></td>' +
         '<td class="mono">' + esc(row.valid_from || '—') + ' → ' + esc(row.valid_to || '长期') + '</td>' +
-        '<td class="note">' + (row.pass_hash ? '已设' : '未设') + '</td>' +
-        '<td><button class="danger" data-del="' + esc(row.call) + '" type="button">删除</button></td>' +
+        '<td class="note">' + (row.has_password ? '已设' : '未设') + '</td>' +
+        '<td><button data-edit="' + esc(row.call) + '" type="button">改</button> ' +
+        '<button class="danger" data-del="' + esc(row.call) + '" type="button">删除</button></td>' +
         '</tr>';
     });
     el('accounts').innerHTML = html || '<tr><td colspan="6" class="note">还没有账号</td></tr>';
@@ -308,6 +407,7 @@ button.danger { color:var(--hot); border-color:var(--hot); }
     token = el('pw').value.trim();
     sessionStorage.setItem('acnAdmin', token);
     refresh();
+    loadStations();
   });
 
   el('saveBtn').addEventListener('click', function () {
@@ -337,7 +437,25 @@ button.danger { color:var(--hot); border-color:var(--hot); }
     });
   });
 
+  function fillForm(call_) {
+    var row = null;
+    (state.accounts || []).forEach(function (item) {
+      if (item.call === call_) row = item;
+    });
+    if (!row) return;
+    el('fCall').value = row.call || '';
+    el('fAccount').value = row.account || '';
+    el('fPassword').value = '';
+    el('fStatus').value = row.status || 'authorized';
+    el('fFrom').value = row.valid_from || '';
+    el('fTo').value = row.valid_to || '';
+    el('fNote').value = row.note || '';
+    el('saveNote').textContent = '已把 ' + row.call + ' 填进表单，改完按保存。';
+  }
+
   el('accounts').addEventListener('click', function (event) {
+    var edit = event.target.getAttribute && event.target.getAttribute('data-edit');
+    if (edit) { fillForm(edit); return; }
     var call_ = event.target.getAttribute && event.target.getAttribute('data-del');
     if (!call_) return;
     if (!window.confirm('删除 ' + call_ + ' ？')) return;
@@ -358,6 +476,32 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       });
   });
 
+  el('stBtn').addEventListener('click', loadStations);
+  el('stCall').addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') loadStations();
+  });
+  el('stations').addEventListener('click', function (event) {
+    var target = event.target.getAttribute && event.target.getAttribute('data-track');
+    if (target) loadTrack(target);
+  });
+  el('exportBtn').addEventListener('click', function () {
+    call('/api/admin/whitelist').then(function (body) {
+      var text = JSON.stringify(body, null, 2);
+      var url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+      var link = document.createElement('a');
+      link.href = url;
+      link.download = 'aprsnetcn-whitelist-v' + body.version + '.json';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      el('exportNote').textContent = '导出了 ' + (body.records || []).length +
+        ' 条，名单版本 ' + body.version + '。';
+    }).catch(function (error) {
+      el('exportNote').textContent = '导出失败：' + error.message;
+    });
+  });
+
   el('qBtn').addEventListener('click', search);
   el('qText').addEventListener('keydown', function (event) {
     if (event.key === 'Enter') search();
@@ -366,6 +510,7 @@ button.danger { color:var(--hot); border-color:var(--hot); }
 
   if (token) {
     refresh();
+    loadStations();
     window.setInterval(function () {
       if (!el('panel').hidden) refresh();
     }, 20000);

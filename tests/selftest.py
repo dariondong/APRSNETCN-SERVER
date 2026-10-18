@@ -315,6 +315,26 @@ def test_end_to_end():
     ok("控制台加账号", status == 200 and saved["account"]["call"] == "BH4HGA", status)
     ok("加账号时名单版本前进", saved.get("version", 0) >= 1, saved.get("version"))
 
+    # ⑩.1 控制台里的台站与账号列
+    ok("状态里的账号不把口令哈希发出去",
+       all("pass_hash" not in row for row in state_body.get("accounts") or []),
+       len(state_body.get("accounts") or []))
+    ok("状态里的账号带 has_password 标志",
+       all("has_password" in row for row in state_body.get("accounts") or []), "")
+    status, listed = api_call("/api/admin/stations?window=24h&limit=10", admin="test-admin")
+    ok("控制台台站列表", status == 200 and listed.get("count", 0) >= 1,
+       listed.get("count"))
+    status, one = api_call("/api/admin/stations/BG7LZQ", admin="test-admin")
+    ok("控制台单台站带轨迹", status == 200 and len(one.get("track") or []) >= 1,
+       len(one.get("track") or []))
+    status, _ = api_call("/api/admin/stations/BG0XYZ", admin="test-admin")
+    ok("控制台查不到的台站回 404", status == 404, status)
+    status, _ = api_call("/api/admin/stations?limit=1")
+    ok("控制台台站列表不带口令回 401", status == 401, status)
+    status, whitelist = api_call("/api/admin/whitelist", admin="test-admin")
+    ok("导出名单拿得到记录", status == 200 and len(whitelist.get("records") or []) >= 1,
+       len(whitelist.get("records") or []))
+
     # ⑪ 名单同步（MANAGER → SERVER）
     payload = {"mode": "incremental", "version": store.whitelist_version() + 1,
                "updated": now_iso(),

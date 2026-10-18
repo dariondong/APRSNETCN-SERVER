@@ -111,6 +111,9 @@ GET  /api/admin/clients                 在线连接
 POST /api/admin/kick                    {"call":"BG7LZQ-2"} 踢掉这个呼号
 GET  /api/admin/packets?q=&dir=&limit=  最近的内存环
 GET  /api/admin/archive?q=&dir=&limit=  存档，开了才有
+GET  /api/admin/stations?window=24h&limit=300   24 小时台站列表
+GET  /api/admin/stations/{call}                 单台站与轨迹
+GET  /api/admin/whitelist                       整份名单（控制台导出的就是这一份）
 ```
 
 `/api/admin/clients` 一条连接一行：呼号、来源地址、`verified`、是否只收、客户端版本、
@@ -123,6 +126,9 @@ GET  /api/admin/archive?q=&dir=&limit=  存档，开了才有
 
 报文检索的 `dir` 是 `in` 或 `out`，不填两条都看。`q` 在整行报文、源呼号、收件人里找。
 内存环只留最近 `ACN_RECENT_LINES` 行（默认 600），重启就空。
+
+台站数据不对外，控制台看台站靠 `/api/admin/stations`；参数与 `/api/v1/stations` 一样。
+`/api/admin/state` 里的账号不带口令哈希，只给一个 `has_password` 标志。
 
 ## 报文存档
 

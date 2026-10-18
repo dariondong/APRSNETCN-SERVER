@@ -240,6 +240,10 @@ def _handler_class(api):
                     return self._admin_clients()
                 if path == "/api/admin/packets":
                     return self._admin_packets(query)
+                if path == "/api/admin/stations":
+                    return self._admin_stations(query)
+                if path.startswith("/api/admin/stations/"):
+                    return self._admin_station(path.rsplit("/", 1)[-1])
                 if path == "/api/admin/archive":
                     return self._admin_archive(query)
                 if path == "/api/admin/whitelist":
@@ -444,6 +448,7 @@ def _handler_class(api):
             for row in accounts:
                 row["effective"] = auth.effective_status(
                     row["status"], row["valid_from"], row["valid_to"], now)
+                row["has_password"] = bool(row.get("pass_hash"))
                 row.pop("pass_hash", None)
             self._json(200, {
                 "ok": True,
@@ -456,6 +461,7 @@ def _handler_class(api):
                     "retention_hours": config.RETENTION_HOURS,
                     "passcode_mode": config.PASSCODE_MODE,
                     "src_policy": config.SRC_POLICY,
+                    "auth_mode": config.AUTH_MODE,
                     "station_count": api.store.station_count(),
                     "public_url": config.PUBLIC_URL,
                     "whitelist_synced_at": api.store.meta("whitelist_synced_at"),
@@ -487,6 +493,32 @@ def _handler_class(api):
                 return self._json(400, {"error": "bad-call"})
             kicked = api.hub.kick(call)
             self._json(200, {"ok": True, "call": call, "kicked": kicked})
+
+        def _admin_stations(self, query):
+            """24 小时台站列表。台站数据不对外，控制台靠管理口令看。"""
+            if not self._admin_ok():
+                return self._json(401, {"error": "unauthorized"})
+            params, error = _list_params(query, default_limit=500)
+            if error:
+                return self._json(400, {"error": error})
+            rows = api.store.stations(window_hours=params["hours"],
+                                      since=params["since"], bbox=params["bbox"],
+                                      limit=params["limit"], offset=params["offset"])
+            self._json(200, {
+                "ok": True,
+                "window": "%dh" % params["hours"],
+                "updated": store_module.now_iso(),
+                "count": len(rows),
+                "stations": rows,
+            })
+
+        def _admin_station(self, call):
+            if not self._admin_ok():
+                return self._json(401, {"error": "unauthorized"})
+            data = api.store.station(call)
+            if data is None:
+                return self._json(404, {"error": "not-found"})
+            self._json(200, data)
 
         def _admin_packets(self, query):
             if not self._admin_ok():
