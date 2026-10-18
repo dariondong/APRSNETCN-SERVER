@@ -609,19 +609,75 @@
     var m = {
       canvas: canvas, ctx: canvas.getContext('2d'),
       coast: [], stations: [], track: null, picked: null, filter: '',
-      view: { lon: 107, lat: 33, z: 0 }, size: { w: 0, h: 0, dpr: 1 }, drag: null
+      view: { lon: 107, lat: 33, z: 0 }, size: { w: 0, h: 0, dpr: 1 }, drag: null,
+      pointers: {}, pinch: null, pinched: false
     };
     state.map = m;
 
+    function localPoint(ev) {
+      var rect = canvas.getBoundingClientRect();
+      return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+    }
+
+    function pinchBase() {
+      var ids = Object.keys(m.pointers);
+      if (ids.length < 2) return null;
+      var a = m.pointers[ids[0]], b = m.pointers[ids[1]];
+      var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      var anchor = unproject(
+        project(m.view.lon, m.view.lat)[0] + (mx - m.size.w / 2) / m.view.z,
+        project(m.view.lon, m.view.lat)[1] + (my - m.size.h / 2) / m.view.z);
+      return { dist: Math.max(8, Math.hypot(a.x - b.x, a.y - b.y)),
+        mx: mx, my: my, z: m.view.z, anchor: anchor };
+    }
+
+    function applyPinch() {
+      var ids = Object.keys(m.pointers);
+      if (ids.length < 2 || !m.pinch) return;
+      var a = m.pointers[ids[0]], b = m.pointers[ids[1]];
+      var dist = Math.max(8, Math.hypot(a.x - b.x, a.y - b.y));
+      var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      var floor = Math.max(m.size.w, m.size.h) * 0.9;
+      var z = Math.max(floor, Math.min(400000, m.pinch.z * (dist / m.pinch.dist)));
+      /* 双指按下时中点压着的那块地，缩放后仍压在中点下，顺带跟着手指平移 */
+      var p = project(m.pinch.anchor[0], m.pinch.anchor[1]);
+      var c = unproject(p[0] - (mx - m.size.w / 2) / z,
+                        p[1] - (my - m.size.h / 2) / z);
+      m.view.z = z;
+      m.view.lon = c[0];
+      m.view.lat = c[1];
+      mapClamp(m);
+      m.pinched = true;
+      mapDraw(m);
+    }
+
     canvas.addEventListener('pointerdown', function (ev) {
       try { canvas.setPointerCapture(ev.pointerId); } catch (e) { /* 老浏览器不认 */ }
-      m.drag = { x: ev.clientX, y: ev.clientY, lon: m.view.lon, lat: m.view.lat, moved: 0 };
+      var p = localPoint(ev);
+      m.pointers[ev.pointerId] = p;
+      var count = Object.keys(m.pointers).length;
+      if (count === 1) {
+        m.drag = { x: p.x, y: p.y, lon: m.view.lon, lat: m.view.lat, moved: 0 };
+        m.pinch = null;
+        m.pinched = false;
+      } else if (count === 2) {
+        m.drag = null;                     /* 双指不再当拖动，改成缩放 */
+        m.pinch = pinchBase();
+      }
       canvas.className = 'dragging';
     });
 
     canvas.addEventListener('pointermove', function (ev) {
+      if (!m.pointers[ev.pointerId]) return;
+      var p = localPoint(ev);
+      m.pointers[ev.pointerId] = p;
+      if (Object.keys(m.pointers).length >= 2) {
+        if (!m.pinch) m.pinch = pinchBase();
+        applyPinch();
+        return;
+      }
       if (!m.drag) return;
-      var dx = ev.clientX - m.drag.x, dy = ev.clientY - m.drag.y;
+      var dx = p.x - m.drag.x, dy = p.y - m.drag.y;
       m.drag.moved = Math.max(m.drag.moved, Math.abs(dx) + Math.abs(dy));
       var c = project(m.drag.lon, m.drag.lat);
       var moved = unproject(c[0] - dx / m.view.z, c[1] - dy / m.view.z);
@@ -631,20 +687,29 @@
       mapDraw(m);
     });
 
-    canvas.addEventListener('pointerup', function (ev) {
-      canvas.className = '';
-      if (m.drag && m.drag.moved < 5) {
-        var rect = canvas.getBoundingClientRect();
-        var hit = mapHit(m, ev.clientX - rect.left, ev.clientY - rect.top);
+    function release(ev, allowClick) {
+      var p = m.pointers[ev.pointerId];
+      delete m.pointers[ev.pointerId];
+      var left = Object.keys(m.pointers).length;
+      if (allowClick && left === 0 && m.drag && m.drag.moved < 5 && !m.pinched && p) {
+        var hit = mapHit(m, p.x, p.y);
         if (hit) mapShow(m, hit); else mapHide(m);
       }
-      m.drag = null;
-    });
+      if (left === 0) {
+        m.drag = null;
+        m.pinch = null;
+        m.pinched = false;
+        canvas.className = '';
+      } else if (left === 1) {
+        /* 抬起一根手指：剩下的那根接着当拖动，基准重算 */
+        var only = m.pointers[Object.keys(m.pointers)[0]];
+        m.drag = { x: only.x, y: only.y, lon: m.view.lon, lat: m.view.lat, moved: 99 };
+        m.pinch = null;
+      }
+    }
 
-    canvas.addEventListener('pointercancel', function () {
-      m.drag = null;
-      canvas.className = '';
-    });
+    canvas.addEventListener('pointerup', function (ev) { release(ev, true); });
+    canvas.addEventListener('pointercancel', function (ev) { release(ev, false); });
 
     canvas.addEventListener('wheel', function (ev) {
       ev.preventDefault();
@@ -655,6 +720,15 @@
       if (state.tab !== 'map') return;
       mapResize(m);
     });
+
+    /* 调试入口：探针读视角与选中的台站，页面上没有别的地方用它 */
+    window.__acnMap = {
+      state: function () {
+        return { z: m.view.z, lon: m.view.lon, lat: m.view.lat,
+          pointers: Object.keys(m.pointers).length,
+          stations: m.stations.length, picked: m.picked ? m.picked.call : '' };
+      }
+    };
 
     return m;
   }
@@ -994,8 +1068,14 @@
       .then(function () { loadState(); });
   });
 
-  $('saveBtn').addEventListener('click', function () {
-    var payload = {
+  $('fPwEye').addEventListener('click', function () {
+    var box = $('fPassword');
+    var show = box.type === 'password';
+    box.type = show ? 'text' : 'password';
+    $('fPwEye').textContent = show ? '隐藏' : '显示';
+  });
+
+  $('saveBtn').addEventListener('click', function () {    var payload = {
       call: $('fCall').value.trim(),
       account: $('fAccount').value.trim(),
       status: $('fStatus').value,
