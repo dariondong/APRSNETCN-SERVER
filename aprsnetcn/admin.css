@@ -165,3 +165,8 @@ td.pkt, .pkt { font-family: var(--mono); font-size: 11.5px; word-break: break-al
   .map-panel { left: 8px; right: 8px; width: auto; max-height: 48%; }
   .map-legend { display: none; }
 }
+
+/* 设备识别排行：一根细条代表台站数（相对第一名），旁边给占比 */
+td .devbar { display: inline-block; height: 6px; vertical-align: middle;
+  margin-right: 8px; background: var(--hot); border-radius: 3px; }
+td .devbar + .note { vertical-align: middle; }

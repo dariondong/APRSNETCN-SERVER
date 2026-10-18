@@ -34,6 +34,7 @@ SCHEMA = (
         course REAL,
         alt REAL,
         comment TEXT,
+        dst TEXT,
         via TEXT,
         src_call TEXT
     )""",
@@ -79,7 +80,15 @@ class Store:
         with self._lock:
             for statement in SCHEMA:
                 self._db.execute(statement)
+            self._migrate()
             self._db.commit()
+
+    def _migrate(self):
+        """旧库补列。SQLite 3.31 起才支持 DROP COLUMN，所以只增不删。"""
+        columns = {row["name"] for row in
+                   self._db.execute("PRAGMA table_info(positions)").fetchall()}
+        if "dst" not in columns:
+            self._db.execute("ALTER TABLE positions ADD COLUMN dst TEXT")
 
     # ── 账号与名单 ──
     def account(self, call):
@@ -205,11 +214,11 @@ class Store:
         with self._lock:
             self._db.execute(
                 """INSERT INTO positions (call, ts, lat, lon, sym_table, sym_code,
-                       speed, course, alt, comment, via, src_call)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       speed, course, alt, comment, dst, via, src_call)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (pkt.src, stamp, pkt.lat, pkt.lon, pkt.sym_table, pkt.sym_code,
-                 pkt.speed, pkt.course, pkt.alt, (pkt.comment or "")[:160], via,
-                 src_call))
+                 pkt.speed, pkt.course, pkt.alt, (pkt.comment or "")[:160],
+                 (getattr(pkt, "dst", "") or "")[:12], via, src_call))
             self._db.commit()
         return True
 
@@ -318,6 +327,33 @@ class Store:
                 (edge,)).fetchone()
         return row["n"] if row else 0
 
+    def device_ranking(self, window_hours=24, limit=40, now=None):
+        """每个台站取窗口内**最后一条**位置包的目的呼号，再按目的呼号归堆。
+
+        SQLite 的 bare-column + MAX() 就是「取 MAX 那一行的其它列」，正好是
+        要的语义：一个台站 24 小时内换了设备，只算最后一次。
+        """
+        stamp = int(now if now is not None else datetime.now(timezone.utc).timestamp())
+        edge = stamp - int(window_hours * 3600)
+        with self._lock:
+            rows = self._db.execute(
+                """SELECT dst, COUNT(*) AS stations, SUM(packets) AS packets
+                     FROM (
+                       SELECT call, dst, MAX(ts) AS last_ts, COUNT(*) AS packets
+                         FROM positions WHERE ts >= ? AND dst IS NOT NULL
+                        GROUP BY call
+                     )
+                    GROUP BY dst
+                    ORDER BY stations DESC, dst ASC
+                    LIMIT ?""",
+                (edge, int(limit))).fetchall()
+            total = self._db.execute(
+                "SELECT COUNT(DISTINCT call) AS n FROM positions WHERE ts >= ?",
+                (edge,)).fetchone()["n"]
+        return [{"to_call": row["dst"] or "",
+                 "stations": row["stations"],
+                 "packets": row["packets"] or 0} for row in rows], total
+
     def position_count(self, window_hours=24, now=None):
         stamp = int(now if now is not None else datetime.now(timezone.utc).timestamp())
         edge = stamp - int(window_hours * 3600)
@@ -417,6 +453,7 @@ def _station_dict(call, row, packets):
         "course": row["course"],
         "alt": row["alt"],
         "comment": row["comment"] or "",
+        "to_call": (row["dst"] if "dst" in row.keys() else "") or "",
         "via": row["via"] or "is",
         "packets": packets,
     }

@@ -139,6 +139,14 @@
   <!-- 台站 -->
   <section class="tab" data-panel="stations">
     <div class="block">
+      <h2>设备识别排行（24 小时）</h2>
+      <p class="note" id="devNote">按每个台站最后一条位置包的目的呼号（TOCALL）归堆，数的是台站数。表里没有的直接写目的呼号。</p>
+      <div class="scroll" style="max-height:44vh"><table>
+        <thead><tr><th>设备</th><th>台站</th><th>占比</th><th>目的呼号</th></tr></thead>
+        <tbody id="devices"></tbody>
+      </table></div>
+    </div>
+    <div class="block">
       <h2>24 小时台站</h2>
       <div class="row">
         <input id="stCall" placeholder="呼号，留空列全部">

@@ -282,6 +282,35 @@
   }
 
   /* ── 台站 ── */
+  function paintDevices(body) {
+    var rows = body.devices || [];
+    var total = body.total_stations || 0;
+    var top = rows.length ? rows[0].stations : 0;
+    var html = '';
+    rows.forEach(function (row) {
+      var share = total ? (row.stations * 100 / total) : 0;
+      var width = top ? Math.max(2, Math.round(row.stations * 100 / top)) : 0;
+      html += '<tr>' +
+        '<td>' + esc(row.model) + '</td>' +
+        '<td class="mono">' + row.stations + '</td>' +
+        '<td><span class="devbar" style="width:' + width + '%"></span>' +
+        '<span class="note mono">' + share.toFixed(1) + '%</span></td>' +
+        '<td class="mono">' + esc((row.to_calls || []).join(' ')) + '</td>' +
+        '</tr>';
+    });
+    $('devices').innerHTML = html ||
+      '<tr><td colspan="4" class="note">还没有可归堆的台站</td></tr>';
+    $('devNote').textContent = '按每个台站最后一条位置包的目的呼号（TOCALL）归堆，'
+      + '共 ' + total + ' 个台站，认出设备名 ' + (body.identified || 0) + ' 个。'
+      + '表里没有的直接写目的呼号。';
+  }
+
+  function loadDevices() {
+    api('/api/admin/devices?window=24h').then(paintDevices).catch(function (error) {
+      $('devNote').textContent = '设备排行没取到：' + error.message;
+    });
+  }
+
   function loadStations(reset) {
     var call_ = $('stCall').value.trim().toUpperCase();
     var limit = parseInt($('stLimit').value, 10) || 300;
@@ -984,7 +1013,7 @@
   LOADERS.clients = LOADERS.overview;
   LOADERS.names = function () { loadState(); };
   LOADERS.packets = function () { search(); };
-  LOADERS.stations = function () { loadStations(true); };
+  LOADERS.stations = function () { loadStations(true); loadDevices(); };
   LOADERS.settings = function () { loadSettings(); };
   LOADERS.audits = function () {
     if (state.au.touched) loadAudits(false); else loadAudits(true);

@@ -50,7 +50,7 @@ os.environ.update({
     "ACN_INGEST_FILTER": "r/35/105/2000",
 })
 
-from aprsnetcn import api, aprslib, auth, config, filters  # noqa: E402
+from aprsnetcn import api, aprslib, auth, config, filters, tocalls  # noqa: E402
 from aprsnetcn.hub import Hub  # noqa: E402
 from aprsnetcn.ingest import Ingest  # noqa: E402
 from aprsnetcn.main import self_check  # noqa: E402
@@ -643,12 +643,49 @@ def test_ingest():
     upstream.close()
 
 
+def test_devices():
+    """设备识别排行：目的呼号 → 设备名，一个台站只算最后一条。"""
+    # 自己的库：别的用例也往同一个库里写台站，混在一起数不清。
+    store = Store(os.path.join(DATA_DIR, "devices.db"))
+    stamp = int(time.time())
+    lines = [
+        # BG6TA 先 APRS、后 APZ001：只应算在最后那条上
+        "BG6TA>APRS:!3954.00N/11623.00E>a",
+        "BG6TA>APZ001:!3954.10N/11623.10E>b",
+        # BG6TB 也走 APZ001：与 BG6TA 并成一堆
+        "BG6TB>APZ001:!3955.00N/11623.00E>c",
+        # 认不出来的目的呼号：按原字样单独一堆
+        "BG6TC>ZZZZZZ:!3956.00N/11623.00E>d",
+    ]
+    for offset, line in enumerate(lines):
+        pkt = aprslib.parse(line)
+        store.record_position(pkt, via="is", now=stamp + offset)
+    rows, total = store.device_ranking(now=stamp + 10)
+    by_call = {row["to_call"]: row for row in rows}
+    ok("排行按目的呼号归堆", set(by_call) == {"APZ001", "ZZZZZZ"},
+       [row["to_call"] for row in rows])
+    ok("一个台站只算最后一条目的呼号", "APRS" not in by_call, by_call.get("APRS"))
+    ok("同一目的呼号的两个台站合在一起",
+       by_call["APZ001"]["stations"] == 2, by_call["APZ001"])
+    ok("排行总数是窗口内的台站数", total == 3, total)
+    ok("算出了台站数", store.station_count(now=stamp + 10) == 3)
+    named = tocalls.model_of("APZ001")
+    ok("目的呼号能查出设备名", named == "Experimental", named)
+    ok("认不出的目的呼号返回空串", tocalls.model_of("ZZZZZZ") == "",
+       tocalls.model_of("ZZZZZZ"))
+    ok("带 ? 的键按位通配", tocalls.model_of("AP4RXX") != "",
+       tocalls.model_of("AP4RXX"))
+    ok("台站详情带着目的呼号",
+       (store.station("BG6TC", now=stamp + 10) or {}).get("to_call") == "ZZZZZZ")
+
+
 def main():
     test_passcode()
     test_parse()
     test_filters()
     test_end_to_end()
     test_ingest()
+    test_devices()
     print("\n%d 项，过了 %d 项" % (len(PASSED) + len(FAILED), len(PASSED)))
     if FAILED:
         print("没过：" + "、".join(FAILED))

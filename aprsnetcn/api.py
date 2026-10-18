@@ -12,7 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import (__version__, auth, config, filters, hub as hub_module,
-               settings as settings_module, store as store_module)
+               settings as settings_module, store as store_module,
+               tocalls as tocalls_module)
 
 BEIJING = store_module.BEIJING
 
@@ -247,6 +248,8 @@ def _handler_class(api):
                     return self._admin_packets(query)
                 if path == "/api/admin/stations":
                     return self._admin_stations(query)
+                if path == "/api/admin/devices":
+                    return self._admin_devices(query)
                 if path.startswith("/api/admin/stations/"):
                     return self._admin_station(path.rsplit("/", 1)[-1])
                 if path == "/api/admin/archive":
@@ -561,6 +564,51 @@ def _handler_class(api):
                 "offset": params["offset"],
                 "limit": params["limit"],
                 "stations": rows,
+            })
+
+        def _admin_devices(self, query):
+            """台站设备识别排行：按目的呼号（TOCALL）归堆，数台站数。
+
+            一个台站只算最后一条位置包上的目的呼号；认不出的按原字样列出，
+            不猜。
+            """
+            if not self._admin_ok():
+                return self._json(401, {"error": "unauthorized"})
+            params, error = _list_params(query, default_limit=60)
+            if error:
+                return self._json(400, {"error": error})
+            rows, total = api.store.device_ranking(window_hours=params["hours"],
+                                                   limit=60)
+            buckets = {}
+            for row in rows:
+                to_call = row["to_call"]
+                model = tocalls_module.model_of(to_call)
+                # 表里写着「未标明设备」或者压根认不出来时，就写目的呼号本身：
+                # 把一堆不同的设备合进一个「未识别」堆里看不出东西。
+                if model in ("", "未标明设备"):
+                    model = to_call or "未标明"
+                    identified = False
+                else:
+                    identified = True
+                item = buckets.get(model)
+                if item is None:
+                    item = buckets[model] = {"model": model, "to_calls": [],
+                                             "stations": 0, "packets": 0,
+                                             "identified": identified}
+                item["stations"] += row["stations"]
+                item["packets"] += row["packets"]
+                item["to_calls"].append(to_call)
+            out = sorted(buckets.values(),
+                         key=lambda item: (-item["stations"], item["model"]))
+            named = sum(item["stations"] for item in out if item["identified"])
+            self._json(200, {
+                "ok": True,
+                "window": "%dh" % params["hours"],
+                "updated": store_module.now_iso(),
+                "total_stations": total,
+                "identified": named,
+                "count": len(out),
+                "devices": out,
             })
 
         def _admin_station(self, call):
