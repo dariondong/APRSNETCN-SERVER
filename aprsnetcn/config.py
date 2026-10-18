@@ -96,6 +96,8 @@ INGEST_PORT = _int("ACN_INGEST_PORT", 14580)
 INGEST_LOGIN = _text("ACN_INGEST_LOGIN", "BG7LZQ")
 INGEST_FILTER = _text("ACN_INGEST_FILTER", "r/35/105/2000")
 INGEST_FORWARD = _text("ACN_INGEST_FORWARD", "0") not in ("0", "false", "no", "off", "")
+# 连着却这么久一行都没收到 → 算「哑了」（看 stats.stale）
+INGEST_STALE_SECONDS = _int("ACN_INGEST_STALE_SECONDS", 300)
 
 # ── 第一次启动时的引导账号（库里已有名单就忽略）──
 BOOTSTRAP_CALL = _text("ACN_BOOTSTRAP_CALL", "")

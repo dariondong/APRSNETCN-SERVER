@@ -615,6 +615,9 @@ def test_ingest():
         conn.sendall(b"# javAPRSSrvr 4.1.0b04\r\n")
         conn.sendall(b"# logresp BG7LZQ unverified, server T2TEST\r\n")
         conn.sendall(b"BG6TA>APRS,TCPIP*,qAR,T2TEST:!3954.00N/11623.00E>from upstream\r\n")
+        # 一行坏字符（\x01）、一行能过字符集但不是 TNC2：两种丢法要分得开
+        conn.sendall(b"BG6TB>APRS:\x01\r\n")
+        conn.sendall(b"not a packet at all\r\n")
         time.sleep(3)
         conn.close()
 
@@ -631,6 +634,11 @@ def test_ingest():
        data and data.get("via"))
     stats = feeder.stats()
     ok("拉取统计里有条数", stats["stored"] >= 1, stats)
+    ok("丢行总数 = 坏字符 + 解析不了",
+       stats["dropped"] == stats["bad_chars"] + stats["unparsable"], stats)
+    ok("坏字符与解析不了各计各的",
+       stats["bad_chars"] >= 1 and stats["unparsable"] >= 1, stats)
+    ok("有报文进来就不算哑", stats["stale"] is False, stats)
     feeder.stop()
     upstream.close()
 

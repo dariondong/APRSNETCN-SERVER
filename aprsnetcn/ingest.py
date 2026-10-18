@@ -23,7 +23,9 @@ class Ingest:
         self.connected = False
         self.lines = 0
         self.stored = 0
-        self.dropped = 0
+        self.dropped = 0            # 总的丢行数（下面两项之和）
+        self.bad_chars = 0          # 字符集 / 行长不合格
+        self.unparsable = 0         # 能过字符集，但不是 TNC2 报文
         self.opened_at = None
         self.last_at = None
         self.error = ""
@@ -119,10 +121,12 @@ class Ingest:
         text, error = aprslib.clean_line(line, config.MAX_LINE)
         if text is None:
             self.dropped += 1
+            self.bad_chars += 1
             return
         pkt = aprslib.parse(text)
         if pkt is None:
             self.dropped += 1
+            self.unparsable += 1
             return
         if self.store.record_position(pkt, via=aprslib.via_of(pkt),
                                       src_call=config.INGEST_LOGIN):
@@ -131,6 +135,7 @@ class Ingest:
             self.hub.broadcast(text, pkt)
 
     def stats(self):
+        idle = None if self.last_at is None else int(time.time()) - self.last_at
         return {
             "enabled": config.INGEST_ENABLED,
             "connected": self.connected,
@@ -139,6 +144,15 @@ class Ingest:
             "lines": self.lines,
             "stored": self.stored,
             "dropped": self.dropped,
+            # 丢行拆成两类：坏字符是上游/线路的问题，解析不了多半是本机
+            # 解析器认不出，两种要分开看才知道该修哪边。
+            "bad_chars": self.bad_chars,
+            "unparsable": self.unparsable,
+            "idle_seconds": idle,
+            # 连着却半天没有一行：看着正常、数据已经停了，这是最容易被
+            # 当成「没台站在报」的一种故障。
+            "stale": bool(self.connected and idle is not None
+                          and idle > config.INGEST_STALE_SECONDS),
             "opened_at": self.opened_at,
             "last_at": self.last_at,
             "error": self.error,

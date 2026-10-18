@@ -162,6 +162,15 @@
       ingestText = '没连上' + (ingest.error ? '（' + ingest.error + '）' : '');
     } else {
       ingestText = (ingest.host || '') + ' · 收 ' + ingest.lines + ' · 入库 ' + ingest.stored;
+      if (ingest.dropped) {
+        ingestText += ' · 丢 ' + ingest.dropped
+            + '（坏字符 ' + (ingest.bad_chars || 0)
+            + ' / 解析不了 ' + (ingest.unparsable || 0) + '）';
+      }
+      // 连着但半天没一行：最容易看成「没台站在报」
+      if (ingest.stale) {
+        ingestText += ' · 已 ' + Math.round((ingest.idle_seconds || 0) / 60) + ' 分钟没新行';
+      }
     }
     var rows = [
       ['端口', (stats.ports || []).join(' / ')],
