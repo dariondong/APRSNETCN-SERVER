@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 
-from . import api, auth, config, hub as hub_module
+from . import api, auth, config, hub as hub_module, settings as settings_module
 from .ingest import Ingest
 from .store import Store
 
@@ -62,6 +62,7 @@ def purge_loop(store, stop):
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     store = Store(config.DB_PATH)
+    applied = settings_module.load(store)                  # 控制台改过的值盖回 config
     bootstrap(store)
     self_check(store)
     node = hub_module.Hub(store)
@@ -77,6 +78,9 @@ def main(argv=None):
     print("APRSNETCN SERVER %s 已启动：TCP %s，HTTP %s，API %s"
           % (config.PROTO_VERSION, ports, config.HTTP_PORT,
              "开" if config.ADMIN_PASSWORD else "关"), flush=True)
+    if applied:
+        print("控制台改过的运行参数 %d 项已生效：%s"
+              % (len(applied), "、".join(applied)), flush=True)
     if config.INGEST_ENABLED:
         print("外部数据：只读拉 %s:%d 的 %s"
               % (config.INGEST_HOST, config.INGEST_PORT, config.INGEST_FILTER),

@@ -13,6 +13,9 @@ sudo chmod 600 /etc/aprsnetcn.env
 
 `/etc/aprsnetcn.env` 里最少改这几项：`ACN_ADMIN_PASSWORD`、`ACN_MANAGER_SECRET`，
 第一次启动再给一组 `ACN_BOOTSTRAP_*` 把第一条授权建出来。
+之后 passcode 校验、鉴权、保留时长、存档、外部拉取这些参数在控制台「设置」页改，
+值存进库，重启也还在；env 里的同名变量当默认值用，控制台能一键退回。
+端口、监听地址、数据目录仍然只认 env。
 
 数据库在 `ACN_DATA_DIR`（默认 `/var/lib/aprsnetcn`），备份就是拷 `aprsnetcn.db`。
 

@@ -11,7 +11,8 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, auth, config, filters, hub as hub_module, store as store_module
+from . import (__version__, auth, config, filters, hub as hub_module,
+               settings as settings_module, store as store_module)
 
 BEIJING = store_module.BEIJING
 
@@ -226,6 +227,10 @@ def _handler_class(api):
                     return self._stations_page()
                 if path == "/assets/coast.json":
                     return self._asset("coast.json", "application/json; charset=utf-8")
+                if path == "/assets/admin.css":
+                    return self._console_asset("admin.css", "text/css; charset=utf-8")
+                if path == "/assets/admin.js":
+                    return self._console_asset("admin.js", "application/javascript; charset=utf-8")
                 if path == "/api/public/stations":
                     return self._public_stations(query)
                 if path.startswith("/api/public/stations/"):
@@ -250,6 +255,8 @@ def _handler_class(api):
                     return self._admin_audits(query)
                 if path == "/api/admin/whitelist":
                     return self._admin_whitelist()
+                if path == "/api/admin/settings":
+                    return self._admin_settings()
                 if path == "/api/manager/whitelist/status":
                     return self._manager_status()
                 return self._json(404, {"error": "not-found"})
@@ -270,6 +277,10 @@ def _handler_class(api):
                     return self._admin_publish()
                 if path == "/api/admin/kick":
                     return self._admin_kick()
+                if path == "/api/admin/settings":
+                    return self._admin_settings_save()
+                if path == "/api/admin/settings/reset":
+                    return self._admin_settings_reset()
                 if path == "/api/manager/whitelist":
                     return self._manager_publish()
                 return self._json(404, {"error": "not-found"})
@@ -309,6 +320,21 @@ def _handler_class(api):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "public, max-age=86400")
             self._cors()
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _console_asset(self, name, content_type):
+            """控制台自己的 css/js：每次都不缓存，改了部署就生效，不用改版本号。"""
+            path = os.path.join(os.path.dirname(__file__), name)
+            try:
+                with open(path, "rb") as handle:
+                    body = handle.read()
+            except OSError:
+                return self._json(404, {"error": "asset-missing"})
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
 
@@ -697,5 +723,47 @@ def _handler_class(api):
             dropped = api.enforce_whitelist("whitelist-synced")
             self._json(200, {"ok": True, "version": version, "records": count,
                              "mode": mode, "dropped": dropped})
+
+        # ── 设置 ──
+        def _admin_settings(self):
+            """能在控制台里直接改的运行参数：当前值、来源（库或 env）、可选项。"""
+            if not self._admin_ok():
+                return self._json(401, {"error": "unauthorized"})
+            self._json(200, {
+                "ok": True,
+                "groups": list(settings_module.GROUPS),
+                "rows": settings_module.rows(api.store),
+                "restart_only": settings_module.restart_rows(),
+                "time": store_module.now_iso(),
+            })
+
+        def _admin_settings_save(self):
+            if not self._admin_ok():
+                return self._json(401, {"error": "unauthorized"})
+            body = self._body()
+            values = body.get("values") if isinstance(body.get("values"), dict) else body
+            result = settings_module.save(api.store, api, values or {})
+            if not result.get("ok"):
+                return self._json(400, result)
+            self._json(200, dict(result, groups=list(settings_module.GROUPS),
+                                 rows=settings_module.rows(api.store),
+                                 restart_only=settings_module.restart_rows(),
+                                 time=store_module.now_iso()))
+
+        def _admin_settings_reset(self):
+            """退回 env 里的值：带 keys 只退那几项，不带就全退。"""
+            if not self._admin_ok():
+                return self._json(401, {"error": "unauthorized"})
+            body = self._body()
+            keys = body.get("keys")
+            if not isinstance(keys, list) or not keys:
+                keys = None
+            result = settings_module.reset(api.store, api, keys)
+            if not result.get("ok"):
+                return self._json(400, result)
+            self._json(200, dict(result, groups=list(settings_module.GROUPS),
+                                 rows=settings_module.rows(api.store),
+                                 restart_only=settings_module.restart_rows(),
+                                 time=store_module.now_iso()))
 
     return Handler

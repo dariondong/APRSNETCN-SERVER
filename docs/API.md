@@ -115,6 +115,9 @@ GET  /api/admin/stations?window=24h&limit=300&offset=0   24 小时台站列表�
 GET  /api/admin/stations/{call}                 单台站与轨迹
 GET  /api/admin/audits?kind=&q=&limit=60&before=<id>   审计，可筛类型、搜关键词、往后翻
 GET  /api/admin/whitelist                       整份名单（控制台导出的就是这一份）
+GET  /api/admin/settings                        能在控制台里改的运行参数
+POST /api/admin/settings                        {"values":{"ACN_RATE_LINES":"45"}} 改一项或几项
+POST /api/admin/settings/reset                  {"keys":["ACN_RATE_LINES"]} 退回 env，不写就全退
 ```
 
 `/api/admin/clients` 一条连接一行：呼号、来源地址、`verified`、是否只收、客户端版本、
@@ -138,9 +141,23 @@ GET  /api/admin/whitelist                       整份名单（控制台导出�
 `/api/admin/state` 的 `meta.whitelist` 是名单汇总：版本、最近同步时间、条目数、已设口令的条数、
 按生效状态的分布，以及同步时效（`max_age_hours`）。
 
+## 运行参数
+
+env 只给启动时的默认值。控制台「设置」页改的值存进库（`meta` 表的 `setting.<KEY>`），
+下次启动先读库再盖进 config；能立刻生效的当场就改内存里的 `config.XXX`，
+`ACN_INGEST_*` 改了会让拉取线程按新参数重连一次，`ACN_RECENT_LINES` 改了保留已收到的报文换新上限。
+
+`GET /api/admin/settings` 每行一个参数：`key`（env 名）、`group`、`label`、`kind`
+（`bool` / `int` / `enum` / `text` / `secret`）、`value`、`source`（`db` 或 `env`）、`env`（env 里的值）。
+`restart_only` 列的是改 env 重启才生效的项（端口、监听地址、数据目录），控制台只读展示。
+
+`POST /api/admin/settings` 只写交上来的那几项。全部先校验再动手，有一项不合格就一条都不改，
+400 回包里 `fields` 指出哪一项错在哪。`secret` 类的项留空表示不改；改管理口令时回包里
+`admin_password_changed` 为真，旧口令立即失效。审计记一条 `settings-changed`，口令的新值不落审计。
+
 ## 报文存档
 
-默认关。要开就在 `/etc/aprsnetcn.env` 里写 `ACN_ARCHIVE_ENABLED=1` 再重启。
+默认关。要开就在控制台「设置」里把「报文存档」打开（或 env 里写 `ACN_ARCHIVE_ENABLED=1` 再重启）。
 `ACN_ARCHIVE_HOURS` 决定留多久，默认 72 小时。开着时每一行进出的报文都写进 `archive` 表，
 过期的在后台删掉；关掉时 `GET /api/admin/archive` 仍然能调，只是库是空的。
 

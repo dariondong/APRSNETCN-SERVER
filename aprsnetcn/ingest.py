@@ -27,12 +27,15 @@ class Ingest:
         self.opened_at = None
         self.last_at = None
         self.error = ""
+        self._gen = 0                                      # 每次 start 换一代，旧线程自退
 
     def start(self):
         if not config.INGEST_ENABLED or self.running:
             return
+        self._gen += 1
         self.running = True
-        self.thread = threading.Thread(target=self._run, name="ingest", daemon=True)
+        self.thread = threading.Thread(target=self._run, args=(self._gen,),
+                                       name="ingest", daemon=True)
         self.thread.start()
 
     def stop(self):
@@ -45,20 +48,36 @@ class Ingest:
             except OSError:
                 pass
 
-    def _run(self):
+    def restart(self):
+        """控制台改了上游地址、过滤器或开关：按新参数重连一次。
+
+        旧线程靠关闭 socket 退出，等它一下再起新的，免得两条连接同时在线。
+        关掉时只 stop，不起新线程。
+        """
+        self.stop()
+        thread = self.thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=3)
+        self.thread = None
+        self.connected = False
+        self.error = ""
+        if config.INGEST_ENABLED:
+            self.start()
+
+    def _run(self, gen=None):
         backoff = 5
-        while self.running:
+        while self.running and (gen is None or gen == self._gen):
             try:
                 self._session()
                 backoff = 5
             except Exception as error:                     # noqa: BLE001
-                if self.running:                           # 主动 stop() 时不算错
+                if self.running and (gen is None or gen == self._gen):
                     self.error = "%s: %s" % (type(error).__name__, error)
                     self.store.audit("ingest-error", {"error": self.error})
             finally:
                 self.connected = False
                 self.sock = None
-            if not self.running:
+            if not self.running or (gen is not None and gen != self._gen):
                 break
             time.sleep(backoff)
             backoff = min(backoff * 2, 120)

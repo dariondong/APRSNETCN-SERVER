@@ -192,6 +192,11 @@ class Hub:
         self.hourly = {}
         self.kicked = 0
 
+    def resize_recent(self, lines):
+        """控制台改了报文环行数：保留已有的行，换一个新的上限。"""
+        with self._recent_lock:
+            self.recent = deque(self.recent, maxlen=max(1, int(lines)))
+
     # ── 启停 ──
     def start(self):
         if self.running:

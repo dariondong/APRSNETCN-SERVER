@@ -517,6 +517,54 @@ def test_end_to_end():
     ok("撤销后的呼号被拒", "(revoked)" in reply, reply.strip())
     sock.close()
 
+    # ⑱ 运行参数在控制台里直接改
+    status, body = api_call("/api/admin/settings", admin="test-admin")
+    keys = [row["key"] for row in body.get("rows") or []]
+    ok("设置接口列出参数", status == 200 and len(keys) >= 20, status)
+    ok("设置里有两块关键项", "ACN_ARCHIVE_ENABLED" in keys and "ACN_INGEST_FILTER" in keys,
+       keys[:6])
+    ok("设置带出 env 只读项", len(body.get("restart_only") or []) >= 4,
+       len(body.get("restart_only") or []))
+    status, body = api_call("/api/admin/settings", method="POST",
+                            body={"values": {"ACN_RATE_LINES": "45"}}, admin="test-admin")
+    ok("改一项立刻生效", status == 200 and config.RATE_LINES == 45, (status, config.RATE_LINES))
+    ok("改过的值存进库", store.meta("setting.ACN_RATE_LINES") == "45",
+       store.meta("setting.ACN_RATE_LINES"))
+    status, body = api_call("/api/admin/settings", method="POST",
+                            body={"values": {"ACN_RATE_LINES": "abc"}}, admin="test-admin")
+    ok("坏值被挡下且报字段", status == 400 and "ACN_RATE_LINES" in (body.get("fields") or {}),
+       (status, body.get("fields")))
+    status, body = api_call("/api/admin/settings", method="POST",
+                            body={"values": {"ACN_RATE_LINES": "999999999"}},
+                            admin="test-admin")
+    ok("越界值被挡下", status == 400, status)
+    status, body = api_call("/api/admin/settings", method="POST",
+                            body={"values": {"ACN_NO_SUCH_KEY": "1"}}, admin="test-admin")
+    ok("不存在的项被拒", status == 400, status)
+    status, body = api_call("/api/admin/settings", method="POST", body={}, admin="test-admin")
+    ok("空改动被拒", status == 400, status)
+    status, body = api_call("/api/admin/settings/reset", method="POST",
+                            body={"keys": ["ACN_RATE_LINES"]}, admin="test-admin")
+    ok("能退回 env 里的值", status == 200 and config.RATE_LINES == 60, config.RATE_LINES)
+    status, body = api_call("/api/admin/settings", method="POST",
+                            body={"values": {"ACN_ADMIN_PASSWORD": "new-pass"}},
+                            admin="test-admin")
+    ok("改管理口令", status == 200 and body.get("admin_password_changed") is True, status)
+    status, _ = api_call("/api/admin/state", admin="new-pass")
+    ok("新口令能用", status == 200, status)
+    status, _ = api_call("/api/admin/state", admin="test-admin")
+    ok("旧口令立即失效", status == 401, status)
+    config.ADMIN_PASSWORD = "test-admin"
+
+    # ⑲ 控制台的 css/js 从包里发，且不缓存
+    for name, kind in (("/", "页面"), ("/assets/admin.js", "脚本"),
+                       ("/assets/admin.css", "样式"), ("/assets/coast.json", "底图")):
+        request = urllib.request.Request("http://127.0.0.1:%d%s" % (HTTP_PORT, name))
+        with urllib.request.urlopen(request, timeout=6) as response:
+            text = response.read().decode("utf-8", "replace")
+        ok("控制台%s能取到" % kind, response.status == 200 and len(text) > 200,
+           (response.status, len(text)))
+
     for item in (a, observer, read_only, far):
         item.close()
     node.stop()
