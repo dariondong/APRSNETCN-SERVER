@@ -25,6 +25,9 @@ LOCALS = {
     "APALOC": ("APRSLocus", "手机应用"),
 }
 
+# 上游表里漏译 / 放错位置的类别
+CLASS_FIX = {"embedded": "嵌入式", "Windows": "桌面软件"}
+
 ENTRY = re.compile(r'"([^"]+)"\s*:\s*"([^"]*)"')
 
 HEAD = '''"""TOCALL（目的呼号）→ 设备型号与类别（自动生成，勿手改）。
@@ -56,6 +59,7 @@ def main(src, dest=DEST):
         parts = [piece.strip() for piece in value.split(" · ")]
         model = parts[0] if parts else value.strip()
         cls = parts[1] if len(parts) > 1 else ""
+        cls = CLASS_FIX.get(cls, cls)
         names.append('    "%s": "%s",' % (_lit(key), _lit(model)))
         classes.append('    "%s": "%s",' % (_lit(key), _lit(cls)))
     body = HEAD % (len(names), len(LOCALS))
