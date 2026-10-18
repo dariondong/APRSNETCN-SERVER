@@ -584,17 +584,19 @@ def _handler_class(api):
             buckets = {}
             for row in rows:
                 to_call = row["to_call"]
-                model = tocalls_module.model_of(to_call)
+                model, cls = tocalls_module.find(to_call)
                 # 表里写着「未标明设备」或者压根认不出来时，就写目的呼号本身：
                 # 把一堆不同的设备合进一个「未识别」堆里看不出东西。
                 if model in ("", "未标明设备"):
                     model = to_call or "未标明"
+                    cls = ""
                     identified = False
                 else:
                     identified = True
                 item = buckets.get(model)
                 if item is None:
-                    item = buckets[model] = {"model": model, "to_calls": [],
+                    item = buckets[model] = {"model": model, "cls": cls,
+                                             "to_calls": [],
                                              "stations": 0, "packets": 0,
                                              "identified": identified}
                 item["stations"] += row["stations"]
@@ -603,6 +605,11 @@ def _handler_class(api):
             out = sorted(buckets.values(),
                          key=lambda item: (-item["stations"], item["model"]))
             named = sum(item["stations"] for item in out if item["identified"])
+            # 小分类：按设备类别拢一下，让「手机应用 78 / 追踪器 40」这种一眼看得见
+            classes = {}
+            for item in out:
+                key = item["cls"] or "未识别"
+                classes[key] = classes.get(key, 0) + item["stations"]
             self._json(200, {
                 "ok": True,
                 "window": "%dh" % params["hours"],
@@ -610,6 +617,9 @@ def _handler_class(api):
                 "total_stations": total,
                 "identified": named,
                 "count": len(out),
+                "classes": [{"cls": key, "stations": value}
+                            for key, value in
+                            sorted(classes.items(), key=lambda kv: -kv[1])],
                 "devices": out,
             })
 

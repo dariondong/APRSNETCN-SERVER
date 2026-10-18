@@ -678,6 +678,12 @@ def test_devices():
     ok("APRSLocus 自己的目的呼号认得出",
        tocalls.model_of("APALOC") == "APRSLocus",
        tocalls.model_of("APALOC"))
+    ok("目的呼号带得出类别", tocalls.class_of("APALOC") == "手机应用",
+       tocalls.class_of("APALOC"))
+    ok("手机应用类认的是 APRSdroid",
+       tocalls.class_of("APDR16") == "手机应用", tocalls.class_of("APDR16"))
+    ok("认不出的目的呼号没有类别", tocalls.class_of("ZZZZZZ") == "",
+       tocalls.class_of("ZZZZZZ"))
     ok("台站详情带着目的呼号",
        (store.station("BG6TC", now=stamp + 10) or {}).get("to_call") == "ZZZZZZ")
 

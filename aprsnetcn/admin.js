@@ -286,12 +286,19 @@
     var rows = body.devices || [];
     var total = body.total_stations || 0;
     var top = rows.length ? rows[0].stations : 0;
+    var chips = '';
+    (body.classes || []).forEach(function (row) {
+      chips += '<span class="note" style="border:1px solid var(--line);padding:1px 7px">'
+        + esc(row.cls) + ' ' + row.stations + '</span>';
+    });
+    $('devClasses').innerHTML = chips;
     var html = '';
     rows.forEach(function (row) {
       var share = total ? (row.stations * 100 / total) : 0;
       var width = top ? Math.max(2, Math.round(row.stations * 100 / top)) : 0;
       html += '<tr>' +
         '<td>' + esc(row.model) + '</td>' +
+        '<td class="note">' + esc(row.cls || '未识别') + '</td>' +
         '<td class="mono">' + row.stations + '</td>' +
         '<td><span class="devbar" style="width:' + width + '%"></span>' +
         '<span class="note mono">' + share.toFixed(1) + '%</span></td>' +
@@ -299,7 +306,7 @@
         '</tr>';
     });
     $('devices').innerHTML = html ||
-      '<tr><td colspan="4" class="note">还没有可归堆的台站</td></tr>';
+      '<tr><td colspan="5" class="note">还没有可归堆的台站</td></tr>';
     $('devNote').textContent = '按每个台站最后一条位置包的目的呼号（TOCALL）归堆，'
       + '共 ' + total + ' 个台站，认出设备名 ' + (body.identified || 0) + ' 个。'
       + '表里没有的直接写目的呼号。';
