@@ -58,6 +58,14 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       <span class="note" id="refreshNote"></span>
     </div>
 
+    <h2>名单同步</h2>
+    <div id="wlSum" class="grid"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" id="publishBtn2" type="button">发布名单</button>
+      <button id="wlRefresh" type="button">重读</button>
+      <span class="note" id="wlNote"></span>
+    </div>
+
     <h2>收发统计</h2>
     <div id="hours" class="tall"></div>
 
@@ -83,6 +91,11 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       <thead><tr><th>呼号</th><th>最后收到</th><th>位置</th><th>来源</th><th>报文</th><th></th></tr></thead>
       <tbody id="stations"></tbody>
     </table></div>
+    <div class="row" style="margin-top:8px">
+      <button id="stPrev" type="button" disabled>上一页</button>
+      <button id="stNext" type="button" disabled>下一页</button>
+      <span class="note" id="stPage"></span>
+    </div>
     <div id="stTrackBox" hidden>
       <p class="note" id="stTrackNote"></p>
       <div class="tall"><table>
@@ -103,10 +116,16 @@ button.danger { color:var(--hot); border-color:var(--hot); }
         <option value="packets">最近的内存环</option>
         <option value="archive">存档（库）</option>
       </select>
+      <select id="qLimit">
+        <option value="100" selected>100 行</option>
+        <option value="300">300 行</option>
+        <option value="500">500 行</option>
+      </select>
       <button class="primary" id="qBtn" type="button">查</button>
+      <label class="note"><input id="qAuto" type="checkbox"> 每 2 秒自己刷</label>
       <span class="note" id="qNote"></span>
     </div>
-    <p class="note">内存环只记客户端进出的报文，从外部拉来的只进 24 小时台站库。</p>
+    <p class="note">内存环只记客户端进出的报文，从外部拉来的只进 24 小时台站库。自动刷新只对内存环生效。</p>
     <div class="tall"><table>
       <thead><tr><th>时间</th><th>方向</th><th>源</th><th>收件人</th><th>报文</th></tr></thead>
       <tbody id="packets"></tbody>
@@ -145,6 +164,13 @@ button.danger { color:var(--hot); border-color:var(--hot); }
     </div>
 
     <h2>审计</h2>
+    <div class="row">
+      <select id="auKind"><option value="">所有类型</option></select>
+      <input id="auText" placeholder="关键词，比如呼号、IP、原因">
+      <button class="primary" id="auBtn" type="button">查</button>
+      <button id="auMore" type="button" disabled>再多看 60 条</button>
+      <span class="note" id="auNote"></span>
+    </div>
     <div id="log"><table><tbody id="audits"></tbody></table></div>
 
     <h2>接口</h2>
@@ -154,7 +180,12 @@ button.danger { color:var(--hot); border-color:var(--hot); }
 <script>
 (function () {
   var token = sessionStorage.getItem('acnAdmin') || '';
-  var state = { accounts: [] };
+  var state = {
+    accounts: [],
+    st: { offset: 0, total: 0 },
+    au: { kind: '', q: '', before: null, rows: [], touched: false }
+  };
+  var autoTimer = 0;
 
   function el(id) { return document.getElementById(id); }
 
@@ -230,10 +261,35 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       'POST /api/admin/kick    {"call":"BG7LZQ-2"}',
       'GET  /api/admin/packets ?q=&dir=in|out&limit=100',
       'GET  /api/admin/archive ?q=&dir=in|out&limit=100',
+      'GET  /api/admin/audits  ?kind=&q=&limit=60&before=<id>',
       'GET  /api/admin/stations ?window=24h&limit=300',
       'GET  /api/admin/stations/{call}',
       'GET  /api/admin/whitelist'
     ].join('\n');
+  }
+
+  function paintWhitelist(meta) {
+    var wl = meta.whitelist || {};
+    var by = wl.by_status || {};
+    var age = wl.max_age_hours != null ? wl.max_age_hours : meta.whitelist_max_age_hours;
+    var rows = [
+      ['名单版本', wl.version != null ? wl.version : meta.whitelist_version],
+      ['最近同步', wl.synced_at ? stamp(wl.synced_at) : '没记录'],
+      ['条目', wl.entries != null ? wl.entries : '—'],
+      ['已设口令', wl.with_password != null ? wl.with_password : '—'],
+      ['已授权', by.authorized || 0],
+      ['待审核', by.pending || 0],
+      ['已暂停', by.suspended || 0],
+      ['已撤销', by.revoked || 0],
+      ['已过期', by.expired || 0],
+      ['同步时效', age ? ('超过 ' + age + ' 小时拒新连接') : '不限制']
+    ];
+    var html = '';
+    rows.forEach(function (row) {
+      html += '<div><div class="note">' + row[0] + '</div><div class="mono">' +
+        esc(row[1]) + '</div></div>';
+    });
+    el('wlSum').innerHTML = html;
   }
 
   function paintHours(rows) {
@@ -294,24 +350,41 @@ button.danger { color:var(--hot); border-color:var(--hot); }
     return (typeof value === 'number') ? value.toFixed(digits) : '—';
   }
 
-  function loadStations() {
+  function loadStations(reset) {
     var call_ = el('stCall').value.trim().toUpperCase();
-    var path = call_ ? ('/api/admin/stations/' + encodeURIComponent(call_))
-      : ('/api/admin/stations?window=24h&limit=' + el('stLimit').value);
-    call(path).then(function (body) {
-      if (call_) {
+    var limit = parseInt(el('stLimit').value, 10) || 300;
+    if (reset) state.st.offset = 0;
+    if (call_) {
+      call('/api/admin/stations/' + encodeURIComponent(call_)).then(function (body) {
         paintStations([body]);
         el('stNote').textContent = '单台站：' + body.call + '，' + body.packets + ' 个位置。';
+        el('stPage').textContent = '';
+        el('stPrev').disabled = true;
+        el('stNext').disabled = true;
         loadTrack(body.call);
-      } else {
+      }).catch(function (error) {
+        el('stNote').textContent = '查失败：' + error.message;
+      });
+      return;
+    }
+    call('/api/admin/stations?window=24h&limit=' + limit + '&offset=' + state.st.offset)
+      .then(function (body) {
+        state.st.total = body.total != null ? body.total : body.count;
         paintStations(body.stations || []);
         el('stNote').textContent = body.count + ' 台，' + body.window +
           ' 窗口，' + stamp(body.updated) + ' 取的这一份。';
+        if (!state.st.total) {
+          el('stPage').textContent = '24 小时里没有台站';
+        } else {
+          el('stPage').textContent = '共 ' + state.st.total + ' 台，这次看第 ' +
+            (state.st.offset + 1) + '–' + (state.st.offset + body.count) + ' 台。';
+        }
+        el('stPrev').disabled = state.st.offset <= 0;
+        el('stNext').disabled = state.st.offset + body.count >= state.st.total;
         el('stTrackBox').hidden = true;
-      }
-    }).catch(function (error) {
-      el('stNote').textContent = '查失败：' + error.message;
-    });
+      }).catch(function (error) {
+        el('stNote').textContent = '查失败：' + error.message;
+      });
   }
 
   function paintStations(rows) {
@@ -356,10 +429,25 @@ button.danger { color:var(--hot); border-color:var(--hot); }
   function search() {
     var scope = el('qScope').value;
     var query = '?q=' + encodeURIComponent(el('qText').value.trim()) +
-      '&dir=' + encodeURIComponent(el('qDir').value) + '&limit=100';
+      '&dir=' + encodeURIComponent(el('qDir').value) +
+      '&limit=' + (parseInt(el('qLimit').value, 10) || 100);
     call('/api/admin/' + scope + query).then(paintPackets).catch(function (error) {
       el('qNote').textContent = '查失败：' + error.message;
     });
+  }
+
+  function startAuto() {
+    stopAuto();
+    if (!el('qAuto').checked) return;
+    autoTimer = window.setInterval(function () {
+      if (el('panel').hidden) return;
+      if (el('qScope').value !== 'packets') return;
+      search();
+    }, 2000);
+  }
+
+  function stopAuto() {
+    if (autoTimer) { window.clearInterval(autoTimer); autoTimer = 0; }
   }
 
   function paintAccounts(accounts) {
@@ -379,20 +467,63 @@ button.danger { color:var(--hot); border-color:var(--hot); }
     el('accounts').innerHTML = html || '<tr><td colspan="6" class="note">还没有账号</td></tr>';
   }
 
-  function paintAudits(audits) {
+  function paintAuditKinds(kinds) {
+    var select = el('auKind');
+    var signature = (kinds || []).map(function (row) {
+      return row.kind + ':' + row.count;
+    }).join(',');
+    if (select.getAttribute('data-sig') === signature) return;
+    var html = '<option value="">所有类型</option>';
+    (kinds || []).forEach(function (row) {
+      html += '<option value="' + esc(row.kind) + '">' + esc(row.kind) +
+        '（' + row.count + '）</option>';
+    });
+    select.innerHTML = html;
+    select.setAttribute('data-sig', signature);
+    select.value = state.au.kind || '';
+  }
+
+  function paintAudits(rows, body) {
     var html = '';
-    audits.forEach(function (row) {
+    rows.forEach(function (row) {
       html += '<tr><td class="mono">' + esc(row.time) + '</td><td>' + esc(row.kind) +
         '</td><td class="note mono">' + esc(JSON.stringify(row.detail)) + '</td></tr>';
     });
-    el('audits').innerHTML = html;
+    el('audits').innerHTML = html ||
+      '<tr><td colspan="3" class="note">没有这类记录</td></tr>';
+    var total = body && body.total != null ? body.total : rows.length;
+    var filter = [state.au.kind, state.au.q].filter(Boolean).join(' / ');
+    el('auNote').textContent = '共 ' + total + ' 条，这次显示 ' + rows.length + ' 条' +
+      (filter ? '（' + filter + '）' : '') + '。';
+    el('auMore').disabled = rows.length >= total;
+  }
+
+  function loadAudits(reset) {
+    if (reset) {
+      state.au.before = null;
+      state.au.rows = [];
+    }
+    var query = '?limit=60';
+    if (state.au.kind) query += '&kind=' + encodeURIComponent(state.au.kind);
+    if (state.au.q) query += '&q=' + encodeURIComponent(state.au.q);
+    if (!reset && state.au.before) query += '&before=' + state.au.before;
+    call('/api/admin/audits' + query).then(function (body) {
+      state.au.rows = reset ? body.rows : state.au.rows.concat(body.rows);
+      state.au.before = body.next_before;
+      state.au.touched = true;
+      paintAuditKinds(body.kinds);
+      paintAudits(state.au.rows, body);
+    }).catch(function (error) {
+      el('auNote').textContent = '审计没取到：' + error.message;
+    });
   }
 
   function refresh() {
     call('/api/admin/state').then(function (body) {
       paintStats(body.stats, body.meta);
+      paintWhitelist(body.meta);
       paintAccounts(body.accounts);
-      paintAudits(body.audits);
+      if (!state.au.touched) loadAudits(true);
       el('refreshNote').textContent = '最后刷新 ' + stamp(body.time);
       el('loginBox').hidden = true;
       el('panel').hidden = false;
@@ -407,7 +538,7 @@ button.danger { color:var(--hot); border-color:var(--hot); }
     token = el('pw').value.trim();
     sessionStorage.setItem('acnAdmin', token);
     refresh();
-    loadStations();
+    loadStations(true);
   });
 
   el('saveBtn').addEventListener('click', function () {
@@ -433,8 +564,20 @@ button.danger { color:var(--hot); border-color:var(--hot); }
   el('publishBtn').addEventListener('click', function () {
     call('/api/admin/publish', { method: 'POST', body: '{}' }).then(function (body) {
       el('saveNote').textContent = '已发布，名单版本 ' + body.version;
+      el('wlNote').textContent = '已发布，名单版本 ' + body.version;
       refresh();
+    }).catch(function (error) {
+      el('wlNote').textContent = '没发布成：' + error.message;
     });
+  });
+
+  el('publishBtn2').addEventListener('click', function () {
+    el('publishBtn').click();
+  });
+
+  el('wlRefresh').addEventListener('click', function () {
+    el('wlNote').textContent = '正在重读…';
+    refresh();
   });
 
   function fillForm(call_) {
@@ -476,9 +619,20 @@ button.danger { color:var(--hot); border-color:var(--hot); }
       });
   });
 
-  el('stBtn').addEventListener('click', loadStations);
+  el('stBtn').addEventListener('click', function () { loadStations(true); });
+  el('stLimit').addEventListener('change', function () { loadStations(true); });
+  el('stPrev').addEventListener('click', function () {
+    var limit = parseInt(el('stLimit').value, 10) || 300;
+    state.st.offset = Math.max(0, state.st.offset - limit);
+    loadStations(false);
+  });
+  el('stNext').addEventListener('click', function () {
+    var limit = parseInt(el('stLimit').value, 10) || 300;
+    state.st.offset += limit;
+    loadStations(false);
+  });
   el('stCall').addEventListener('keydown', function (event) {
-    if (event.key === 'Enter') loadStations();
+    if (event.key === 'Enter') loadStations(true);
   });
   el('stations').addEventListener('click', function (event) {
     var target = event.target.getAttribute && event.target.getAttribute('data-track');
@@ -506,11 +660,28 @@ button.danger { color:var(--hot); border-color:var(--hot); }
   el('qText').addEventListener('keydown', function (event) {
     if (event.key === 'Enter') search();
   });
+  el('qAuto').addEventListener('change', startAuto);
+  el('qScope').addEventListener('change', function () {
+    if (el('qScope').value === 'archive' && el('qAuto').checked) {
+      el('qNote').textContent = '存档是库里的旧行，不跟着刷；要看新的把范围切回内存环。';
+    }
+  });
   el('refreshBtn').addEventListener('click', refresh);
+
+  el('auBtn').addEventListener('click', function () {
+    state.au.kind = el('auKind').value;
+    state.au.q = el('auText').value.trim();
+    loadAudits(true);
+  });
+  el('auText').addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') el('auBtn').click();
+  });
+  el('auKind').addEventListener('change', function () { el('auBtn').click(); });
+  el('auMore').addEventListener('click', function () { loadAudits(false); });
 
   if (token) {
     refresh();
-    loadStations();
+    loadStations(true);
     window.setInterval(function () {
       if (!el('panel').hidden) refresh();
     }, 20000);

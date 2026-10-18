@@ -246,6 +246,8 @@ def _handler_class(api):
                     return self._admin_station(path.rsplit("/", 1)[-1])
                 if path == "/api/admin/archive":
                     return self._admin_archive(query)
+                if path == "/api/admin/audits":
+                    return self._admin_audits(query)
                 if path == "/api/admin/whitelist":
                     return self._admin_whitelist()
                 if path == "/api/manager/whitelist/status":
@@ -445,11 +447,17 @@ def _handler_class(api):
                 return self._json(401, {"error": "unauthorized"})
             now = store_module.now_iso()
             accounts = api.store.accounts()
+            by_status = {}
+            with_password = 0
             for row in accounts:
                 row["effective"] = auth.effective_status(
                     row["status"], row["valid_from"], row["valid_to"], now)
                 row["has_password"] = bool(row.get("pass_hash"))
                 row.pop("pass_hash", None)
+                key = row["effective"]
+                by_status[key] = by_status.get(key, 0) + 1
+                if row["has_password"]:
+                    with_password += 1
             self._json(200, {
                 "ok": True,
                 "stats": api.hub.stats(),
@@ -466,6 +474,14 @@ def _handler_class(api):
                     "public_url": config.PUBLIC_URL,
                     "whitelist_synced_at": api.store.meta("whitelist_synced_at"),
                     "whitelist_max_age_hours": config.WHITELIST_MAX_AGE_HOURS,
+                    "whitelist": {
+                        "version": api.store.whitelist_version(),
+                        "synced_at": api.store.meta("whitelist_synced_at"),
+                        "max_age_hours": config.WHITELIST_MAX_AGE_HOURS,
+                        "entries": len(accounts),
+                        "with_password": with_password,
+                        "by_status": by_status,
+                    },
                     "admin_denied": api.admin_denied,
                     "default_filter": "all",
                     "public_api": config.PUBLIC_API,
@@ -509,6 +525,9 @@ def _handler_class(api):
                 "window": "%dh" % params["hours"],
                 "updated": store_module.now_iso(),
                 "count": len(rows),
+                "total": api.store.station_count(params["hours"]),
+                "offset": params["offset"],
+                "limit": params["limit"],
                 "stations": rows,
             })
 
@@ -545,6 +564,39 @@ def _handler_class(api):
             self._json(200, {"ok": True, "source": "archive", "enabled": config.ARCHIVE_ENABLED,
                              "hours": config.ARCHIVE_HOURS, "total": api.store.archive_count(),
                              "count": len(lines), "lines": lines})
+
+        def _admin_audits(self, query):
+            """审计列表：可筛类型、可搜关键词、可按游标往后翻。"""
+            if not self._admin_ok():
+                return self._json(401, {"error": "unauthorized"})
+            kind = (query.get("kind") or [""])[0].strip()
+            text = (query.get("q") or [""])[0].strip()
+            try:
+                limit = int((query.get("limit") or ["60"])[0])
+            except ValueError:
+                return self._json(400, {"error": "bad-limit"})
+            limit = max(1, min(500, limit))
+            before = None
+            raw = (query.get("before") or [""])[0].strip()
+            if raw:
+                try:
+                    before = int(raw)
+                except ValueError:
+                    return self._json(400, {"error": "bad-before"})
+            rows = api.store.audits(limit=limit, kind=kind or None,
+                                    q=text or None, before=before)
+            total = api.store.audit_count(kind or None, text or None)
+            self._json(200, {
+                "ok": True,
+                "count": len(rows),
+                "total": total,
+                "kind": kind,
+                "q": text,
+                "kinds": api.store.audit_kinds(),
+                "next_before": rows[-1]["id"] if rows else None,
+                "more": bool(rows) and total > len(rows),
+                "rows": rows,
+            })
 
         def _admin_account(self):
             if not self._admin_ok():

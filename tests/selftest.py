@@ -335,6 +335,60 @@ def test_end_to_end():
     ok("导出名单拿得到记录", status == 200 and len(whitelist.get("records") or []) >= 1,
        len(whitelist.get("records") or []))
 
+    # ⑩.2 控制台台站分页与名单汇总
+    ok("台站列表带总数与分页参数", "total" in listed and listed.get("limit") == 10
+       and listed.get("offset") == 0, sorted(listed))
+    ok("台站总数不小于本页条数", listed.get("total", 0) >= listed.get("count", 0),
+       (listed.get("total"), listed.get("count")))
+    pkt = aprslib.parse("BG6TA>APRS:!3955.00N/11624.00E>paging probe")
+    store.record_position(pkt, via="is")
+    status, walk = api_call("/api/admin/stations?window=24h&limit=1&offset=1",
+                            admin="test-admin")
+    ok("台站分页 offset 往后翻", status == 200 and walk.get("count") == 1
+       and walk.get("offset") == 1, (walk.get("count"), walk.get("offset")))
+    status, allrows = api_call("/api/admin/stations?window=24h&limit=10", admin="test-admin")
+    ok("分页的第二台就是列表的第二台",
+       (walk.get("stations") or [{}])[0].get("call")
+       == (allrows.get("stations") or [{}, {}])[1].get("call"),
+       [(row.get("call")) for row in allrows.get("stations") or []])
+    summary = (state_body.get("meta") or {}).get("whitelist") or {}
+    ok("状态里带名单汇总", summary.get("entries", 0) >= 1, summary.get("entries"))
+    ok("名单汇总按状态分好组", sum((summary.get("by_status") or {}).values())
+       == summary.get("entries"), summary.get("by_status"))
+    ok("名单汇总带同步版本与策略", "version" in summary and "max_age_hours" in summary,
+       summary.get("version"))
+
+    # ⑩.3 审计：筛选、搜索、往后翻
+    status, _ = api_call("/api/admin/audits")
+    ok("审计列表不带口令回 401", status == 401, status)
+    status, audits = api_call("/api/admin/audits?limit=5", admin="test-admin")
+    ok("审计列表取得到", status == 200 and audits.get("count", 0) >= 1, audits.get("count"))
+    ok("审计列表带库内总数", audits.get("total", 0) >= audits.get("count", 0),
+       (audits.get("total"), audits.get("count")))
+    ok("审计类型带上条数", any(row["kind"] == "admin-denied" for row in
+                              audits.get("kinds") or []),
+       [row["kind"] for row in (audits.get("kinds") or [])[:5]])
+    status, filtered = api_call("/api/admin/audits?kind=admin-denied", admin="test-admin")
+    ok("按类型筛只剩这一类", status == 200 and filtered.get("count", 0) >= 1
+       and all(row["kind"] == "admin-denied" for row in filtered.get("rows") or []),
+       filtered.get("count"))
+    status, searched = api_call("/api/admin/audits?q=BG7LZQ", admin="test-admin")
+    ok("按关键词搜进 detail 里", status == 200 and searched.get("count", 0) >= 1,
+       searched.get("count"))
+    ok("搜出来的每一行都真的带这个字",
+       all("BG7LZQ" in json.dumps(row, ensure_ascii=False).upper()
+           for row in searched.get("rows") or []), searched.get("count"))
+    status, page1 = api_call("/api/admin/audits?limit=2", admin="test-admin")
+    cursor = page1.get("next_before")
+    status, page2 = api_call("/api/admin/audits?limit=2&before=%s" % cursor,
+                             admin="test-admin")
+    ids1 = [row["id"] for row in page1.get("rows") or []]
+    ids2 = [row["id"] for row in page2.get("rows") or []]
+    ok("往后翻拿到更早的行", status == 200 and ids2 and max(ids2) < min(ids1),
+       (ids1, ids2))
+    ok("审计游标写错回 400", api_call("/api/admin/audits?before=abc",
+                                  admin="test-admin")[0] == 400)
+
     # ⑪ 名单同步（MANAGER → SERVER）
     payload = {"mode": "incremental", "version": store.whitelist_version() + 1,
                "updated": now_iso(),

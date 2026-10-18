@@ -334,10 +334,20 @@ class Store:
                               json.dumps(detail or {}, ensure_ascii=False)))
             self._db.commit()
 
-    def audits(self, limit=200):
+    def audits(self, limit=200, kind=None, q=None, before=None):
+        """审计行，新的在前。kind 是精确匹配，q 在 kind 与 detail 里找子串，
+        before 是游标（上一页最后一行的 id），用来往后翻。"""
+        where, args = self._audit_where(kind, q)
+        if before:
+            where.append("id < ?")
+            args.append(int(before))
+        sql = "SELECT * FROM audit"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(int(limit))
         with self._lock:
-            rows = self._db.execute(
-                "SELECT * FROM audit ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+            rows = self._db.execute(sql, args).fetchall()
         out = []
         for row in rows:
             try:
@@ -347,6 +357,35 @@ class Store:
             out.append({"id": row["id"], "time": iso_of(row["ts"]),
                         "kind": row["kind"], "detail": detail})
         return out
+
+    def _audit_where(self, kind=None, q=None):
+        where, args = [], []
+        if kind:
+            where.append("kind = ?")
+            args.append(kind)
+        if q:
+            like = "%" + q + "%"
+            where.append("(kind LIKE ? OR detail LIKE ?)")
+            args.extend([like, like])
+        return where, args
+
+    def audit_count(self, kind=None, q=None):
+        """同一个筛条件的总行数，跟 audits() 的 where 用同一套写法。"""
+        where, args = self._audit_where(kind, q)
+        sql = "SELECT COUNT(*) AS n FROM audit"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        with self._lock:
+            row = self._db.execute(sql, args).fetchone()
+        return row["n"] if row else 0
+
+    def audit_kinds(self):
+        """库里出现过的审计类型与条数，给控制台做筛选下拉框。"""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT kind, COUNT(*) AS n FROM audit GROUP BY kind "
+                "ORDER BY n DESC, kind").fetchall()
+        return [{"kind": row["kind"], "count": row["n"]} for row in rows]
 
     def meta(self, key, default=None):
         with self._lock:

@@ -111,8 +111,9 @@ GET  /api/admin/clients                 在线连接
 POST /api/admin/kick                    {"call":"BG7LZQ-2"} 踢掉这个呼号
 GET  /api/admin/packets?q=&dir=&limit=  最近的内存环
 GET  /api/admin/archive?q=&dir=&limit=  存档，开了才有
-GET  /api/admin/stations?window=24h&limit=300   24 小时台站列表
+GET  /api/admin/stations?window=24h&limit=300&offset=0   24 小时台站列表（带 total）
 GET  /api/admin/stations/{call}                 单台站与轨迹
+GET  /api/admin/audits?kind=&q=&limit=60&before=<id>   审计，可筛类型、搜关键词、往后翻
 GET  /api/admin/whitelist                       整份名单（控制台导出的就是这一份）
 ```
 
@@ -128,7 +129,14 @@ GET  /api/admin/whitelist                       整份名单（控制台导出�
 内存环只留最近 `ACN_RECENT_LINES` 行（默认 600），重启就空。
 
 台站数据不对外，控制台看台站靠 `/api/admin/stations`；参数与 `/api/v1/stations` 一样。
+返回里带 `total`（窗口内的台站总数）、`offset`、`limit`，控制台拿它做分页。
 `/api/admin/state` 里的账号不带口令哈希，只给一个 `has_password` 标志。
+
+审计列表：`kind` 精确匹配，`q` 在 `kind` 与 `detail` 里找子串，`before` 是游标
+（上一页最后一行的 `id`）。回包里 `total` 是同一筛选条件下的总行数，`next_before` 给下一次往后翻用，
+`kinds` 是库里出现过的类型与条数，控制台的筛选下拉框就是它。
+`/api/admin/state` 的 `meta.whitelist` 是名单汇总：版本、最近同步时间、条目数、已设口令的条数、
+按生效状态的分布，以及同步时效（`max_age_hours`）。
 
 ## 报文存档
 
@@ -140,7 +148,7 @@ GET  /api/admin/whitelist                       整份名单（控制台导出�
 
 | 状态码 | `error` | 含义 |
 | --- | --- | --- |
-| 400 | `bad-bbox` / `bad-since` / `bad-limit` | 参数写错 |
+| 400 | `bad-bbox` / `bad-since` / `bad-limit` / `bad-before` | 参数写错 |
 | 401 | `unauthorized` | 没带 token 或已过期 |
 | 401 | `bad-credentials` | 账号或密码不对 |
 | 403 | `not-authorized` | 名单里没有，或授权已过期、已暂停、已撤销；名单过期没同步时 `reason` 是 `whitelist-stale` |
