@@ -279,7 +279,7 @@ class Store:
         if bbox:
             sql.append("AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?")
             args.extend([bbox[0], bbox[2], bbox[1], bbox[3]])
-        sql.append("GROUP BY call ORDER BY last_ts DESC LIMIT ? OFFSET ?")
+        sql.append("GROUP BY call ORDER BY last_ts DESC, call ASC LIMIT ? OFFSET ?")
         args.extend([int(limit), int(offset)])
         with self._lock:
             rows = self._db.execute(" ".join(sql), args).fetchall()

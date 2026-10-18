@@ -254,6 +254,29 @@ def test_end_to_end():
     ok("密码错拿不到 token", status == 401, status)
     status, body = api_call("/api/v1/stations?window=24h", token=token)
     ok("拿到 24 小时台站", status == 200 and body.get("count", 0) >= 1, body.get("count"))
+    ok("台站列表带 total / offset / limit",
+       body.get("total", 0) >= body.get("count", 0)
+       and body.get("offset") == 0 and body.get("limit") == 500,
+       (body.get("total"), body.get("offset"), body.get("limit")))
+    status, whole = api_call("/api/v1/stations?window=24h&limit=5000", token=token)
+    order = [row.get("call") for row in whole.get("stations") or []]
+    walked = []
+    for offset in range(min(len(order), 3)):
+        status, page = api_call("/api/v1/stations?window=24h&limit=1&offset=%d" % offset,
+                                token=token)
+        if status != 200 or page.get("count") != 1:
+            walked.append(None)
+            continue
+        walked.append((page.get("stations") or [{}])[0].get("call"))
+        if page.get("offset") != offset:
+            walked[-1] = None
+    ok("一页一条能按顺序走完", walked == order[:len(walked)] and all(walked),
+       (walked, order[:len(walked)]))
+    if len(order) >= 2:
+        status, tail = api_call("/api/v1/stations?window=24h&limit=1&offset=%d"
+                                % (len(order) - 1), token=token)
+        ok("最后一页也是这一台", (tail.get("stations") or [{}])[0].get("call") == order[-1],
+           ((tail.get("stations") or [{}])[0].get("call"), order[-1]))
     status, one = api_call("/api/v1/stations/BG7LZQ", token=token)
     ok("单站带轨迹", status == 200 and len(one.get("track") or []) >= 1,
        len(one.get("track") or []))

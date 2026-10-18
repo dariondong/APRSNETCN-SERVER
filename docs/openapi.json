@@ -191,6 +191,16 @@
           "count": {
             "type": "integer"
           },
+          "total": {
+            "type": "integer",
+            "description": "窗口内的台站总数，配合 offset 分页用"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
           "stations": {
             "type": "array",
             "items": {

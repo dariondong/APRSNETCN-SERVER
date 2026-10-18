@@ -427,6 +427,9 @@ def _handler_class(api):
                 "window": "%dh" % params["hours"],
                 "updated": store_module.now_iso(),
                 "count": len(rows),
+                "total": api.store.station_count(params["hours"]),
+                "offset": params["offset"],
+                "limit": params["limit"],
                 "stations": rows,
             })
 
@@ -446,6 +449,9 @@ def _handler_class(api):
                 "window": "%dh" % params["hours"],
                 "updated": store_module.now_iso(),
                 "count": len(rows),
+                "total": api.store.station_count(params["hours"]),
+                "offset": params["offset"],
+                "limit": params["limit"],
                 "stations": rows,
             })
 

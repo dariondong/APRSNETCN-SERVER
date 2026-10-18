@@ -46,6 +46,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "window": "24h",
   "updated": "2026-10-18T00:12:33+08:00",
   "count": 1,
+  "total": 2324,
+  "offset": 0,
+  "limit": 200,
   "stations": [
     {
       "call": "BG7LZQ-9",
@@ -65,6 +68,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```
 
 `via` 是这条台站最近的报文从哪来：`rf` 走射频，`is` 走网络。
+
+`total` 是窗口里的台站总数，`count` 是这一页给了几条：翻页就按 `offset` 加
+`count` 往后走，`count` 小于 `limit` 说明到底了。排序按最后收到的时间倒序，
+时间相同的按呼号升序，所以翻页不会漏也不会重。
 
 ## 单台站
 
