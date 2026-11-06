@@ -73,6 +73,8 @@ ARCHIVE_HOURS = _int("ACN_ARCHIVE_HOURS", 72)
 
 # ── HTTP：公开 API + 管理控制台 ──
 HTTP_HOST = _text("ACN_HTTP_HOST", "0.0.0.0")
+# 请求体上限：8 MB。备份与一天的轨迹都能整份进得来，再大就不收。
+HTTP_MAX_BODY = _int("ACN_HTTP_MAX_BODY", 8 * 1024 * 1024)
 HTTP_PORT = _int("ACN_HTTP_PORT", 8899)
 PUBLIC_URL = _text("ACN_PUBLIC_URL", "")            # 例如 http://8.138.199.11:8899
 
@@ -85,6 +87,16 @@ API_RATE_MINUTE = _int("ACN_API_RATE_MINUTE", 120)  # 每 token 每分钟
 # 24 小时台站数据不对外公开：站点页与 /api/public/* 默认关，
 # 要对外服务得在 env 里写 ACN_PUBLIC_API=1。带 token 的 /api/v1/stations 不受影响。
 PUBLIC_API = _text("ACN_PUBLIC_API", "0") not in ("0", "false", "no", "off", "")
+
+# ── 个人数据同步（消息 / 备份 / 历史轨迹）──
+# 令牌是长期的：同步要在几个星期不打开的情况下仍然能用，口令只登录一次。
+SYNC_ENABLED = _text("ACN_SYNC_ENABLED", "1") not in ("0", "false", "no", "off", "")
+SYNC_TOKEN_TTL = _int("ACN_SYNC_TOKEN_TTL", 90 * 86400)
+SYNC_MSG_LIMIT = _int("ACN_SYNC_MSG_LIMIT", 5000)          # 每人留多少条消息
+SYNC_TRACK_DAYS = _int("ACN_SYNC_TRACK_DAYS", 365)         # 每人留多少天轨迹
+SYNC_TRACK_POINTS = _int("ACN_SYNC_TRACK_POINTS", 60000)   # 单天点数上限
+SYNC_BACKUPS = _int("ACN_SYNC_BACKUPS", 3)                 # 每人留几份备份
+SYNC_BATCH = _int("ACN_SYNC_BATCH", 500)                   # 单次上传/返回的条数上限
 # 公开台站页与它调的那两个接口不验 token，按来源 IP 限流
 PUBLIC_RATE_MINUTE = _int("ACN_PUBLIC_RATE_MINUTE", 60)
 

@@ -100,6 +100,11 @@ def new_token():
     return secrets.token_urlsafe(24)
 
 
+def token_hash(token):
+    """同步令牌落库只存这个：库被拿走也换不回能用的令牌。"""
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
 def constant_equal(left, right):
     return hmac.compare_digest(str(left or ""), str(right or ""))
 

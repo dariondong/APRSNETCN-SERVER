@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import gzip
 import json
+import math
 import os
+import secrets
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -57,6 +60,58 @@ SCHEMA = (
         detail TEXT
     )""",
     "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)",
+    # ── 个人数据同步：令牌、设备、消息、轨迹、备份 ──
+    # 令牌只存哈希：库被人拿走也拿不到能用的令牌。
+    """CREATE TABLE IF NOT EXISTS sync_tokens (
+        token_hash TEXT PRIMARY KEY,
+        call TEXT NOT NULL,
+        device TEXT,
+        created INTEGER NOT NULL,
+        used INTEGER,
+        expires INTEGER NOT NULL,
+        revoked INTEGER NOT NULL DEFAULT 0
+    )""",
+    "CREATE INDEX IF NOT EXISTS sync_tokens_call ON sync_tokens(call)",
+    """CREATE TABLE IF NOT EXISTS sync_devices (
+        call TEXT NOT NULL,
+        device TEXT NOT NULL,
+        ver TEXT,
+        platform TEXT,
+        abi TEXT,
+        first INTEGER,
+        last INTEGER,
+        PRIMARY KEY (call, device)
+    )""",
+    """CREATE TABLE IF NOT EXISTS user_messages (
+        call TEXT NOT NULL,
+        mid TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        peer TEXT,
+        dir TEXT,
+        text TEXT,
+        acked INTEGER NOT NULL DEFAULT 0,
+        grp TEXT,
+        PRIMARY KEY (call, mid)
+    )""",
+    "CREATE INDEX IF NOT EXISTS user_messages_ts ON user_messages(call, ts)",
+    """CREATE TABLE IF NOT EXISTS user_tracks (
+        call TEXT NOT NULL,
+        day TEXT NOT NULL,
+        device TEXT NOT NULL DEFAULT '',
+        points INTEGER NOT NULL DEFAULT 0,
+        updated INTEGER,
+        payload BLOB,
+        PRIMARY KEY (call, day, device)
+    )""",
+    """CREATE TABLE IF NOT EXISTS user_backups (
+        call TEXT NOT NULL,
+        id TEXT NOT NULL,
+        created INTEGER,
+        label TEXT,
+        size INTEGER,
+        payload BLOB,
+        PRIMARY KEY (call, id)
+    )""",
 )
 
 
@@ -362,6 +417,336 @@ class Store:
                                    (edge,)).fetchone()
         return row["n"] if row else 0
 
+    # ── 个人数据同步：令牌与设备 ──
+    def sync_put_token(self, token_hash, call, device, ttl, now=None):
+        stamp = int(now if now is not None else datetime.now(timezone.utc).timestamp())
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO sync_tokens "
+                "(token_hash, call, device, created, used, expires, revoked) "
+                "VALUES (?,?,?,?,?,?,0)",
+                (token_hash, call, device or "", stamp, stamp, stamp + int(ttl)))
+            self._db.commit()
+        return stamp + int(ttl)
+
+    def sync_token(self, token_hash, now=None):
+        """认令牌。过期的、被撤的一律当没有；认下来顺手记一次 used。"""
+        stamp = int(now if now is not None else datetime.now(timezone.utc).timestamp())
+        with self._lock:
+            row = self._db.execute("SELECT * FROM sync_tokens WHERE token_hash = ?",
+                                   (token_hash,)).fetchone()
+            if not row or row["revoked"] or row["expires"] < stamp:
+                return None
+            self._db.execute("UPDATE sync_tokens SET used = ? WHERE token_hash = ?",
+                             (stamp, token_hash))
+            self._db.commit()
+        return dict(row)
+
+    def sync_tokens(self, call):
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM sync_tokens WHERE call = ? ORDER BY created DESC",
+                (call,)).fetchall()
+        return [{"device": row["device"] or "", "created": iso_of(row["created"]),
+                 "used": iso_of(row["used"]) if row["used"] else None,
+                 "expires": iso_of(row["expires"]),
+                 "revoked": bool(row["revoked"])} for row in rows]
+
+    def sync_revoke(self, call, device=None, token_hash=None):
+        sql = "UPDATE sync_tokens SET revoked = 1 WHERE call = ? AND revoked = 0"
+        args = [call]
+        if token_hash:
+            sql += " AND token_hash = ?"
+            args.append(token_hash)
+        if device:
+            sql += " AND device = ?"
+            args.append(device)
+        with self._lock:
+            cursor = self._db.execute(sql, args)
+            self._db.commit()
+        return cursor.rowcount
+
+    def sync_device(self, call, device, ver="", platform="", abi="", now=None):
+        """记一台设备：先到的写 first，每次都刷新 last / 版本。"""
+        device = (device or "").strip()
+        if not device:
+            return False
+        stamp = int(now if now is not None else datetime.now(timezone.utc).timestamp())
+        with self._lock:
+            self._db.execute(
+                """INSERT INTO sync_devices (call, device, ver, platform, abi, first, last)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(call, device) DO UPDATE SET
+                       ver = excluded.ver,
+                       platform = excluded.platform,
+                       abi = excluded.abi,
+                       last = excluded.last""",
+                (call, device, (ver or "")[:24], (platform or "")[:24],
+                 (abi or "")[:24], stamp, stamp))
+            self._db.commit()
+        return True
+
+    def sync_devices(self, call):
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM sync_devices WHERE call = ? ORDER BY last DESC",
+                (call,)).fetchall()
+        return [{"device": row["device"], "ver": row["ver"] or "",
+                 "platform": row["platform"] or "", "abi": row["abi"] or "",
+                 "first": iso_of(row["first"]) if row["first"] else None,
+                 "last": iso_of(row["last"]) if row["last"] else None} for row in rows]
+
+    def sync_drop_device(self, call, device):
+        """去掉一台设备：它发过的令牌一起作废，数据留着（数据属于呼号）。"""
+        with self._lock:
+            self._db.execute("DELETE FROM sync_devices WHERE call = ? AND device = ?",
+                             (call, device))
+            self._db.commit()
+        return self.sync_revoke(call, device=device)
+
+    # ── 个人数据同步：消息 ──
+    def sync_messages_put(self, call, items, limit=5000, now=None):
+        """并集写：新 mid 插入，已存在的只把 acked 往「已确认」上推。
+
+        客户端只负责把它手里的一批报上来，去重与截断都在这里，
+        这样两台设备各自上传也不会出现重复行。
+        """
+        added = 0
+        with self._lock:
+            for item in items:
+                mid = (item.get("mid") or "").strip()
+                if not mid:
+                    continue
+                try:
+                    ts = int(item.get("ts") or 0)
+                except (TypeError, ValueError):
+                    continue
+                row = self._db.execute(
+                    "SELECT acked FROM user_messages WHERE call = ? AND mid = ?",
+                    (call, mid)).fetchone()
+                acked = 1 if item.get("acked") else 0
+                if row is None:
+                    self._db.execute(
+                        """INSERT INTO user_messages
+                               (call, mid, ts, peer, dir, text, acked, grp)
+                           VALUES (?,?,?,?,?,?,?,?)""",
+                        (call, mid, ts, (item.get("peer") or "")[:24],
+                         (item.get("dir") or "in")[:8],
+                         (item.get("text") or "")[:512], acked,
+                         (item.get("grp") or "")[:32]))
+                    added += 1
+                elif acked and not row["acked"]:
+                    self._db.execute(
+                        "UPDATE user_messages SET acked = 1 "
+                        "WHERE call = ? AND mid = ?", (call, mid))
+            self._db.execute(
+                "DELETE FROM user_messages WHERE call = ? AND mid NOT IN "
+                "(SELECT mid FROM user_messages WHERE call = ? "
+                " ORDER BY ts DESC, mid DESC LIMIT ?)",
+                (call, call, int(limit)))
+            self._db.commit()
+        return added
+
+    def sync_messages(self, call, since=0, limit=500, offset=0):
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM user_messages WHERE call = ? AND ts >= ? "
+                "ORDER BY ts ASC, mid ASC LIMIT ? OFFSET ?",
+                (call, int(since), int(limit), int(offset))).fetchall()
+        return [{"mid": row["mid"], "ts": row["ts"], "peer": row["peer"] or "",
+                 "dir": row["dir"] or "in", "text": row["text"] or "",
+                 "acked": bool(row["acked"]), "grp": row["grp"] or ""}
+                for row in rows]
+
+    def sync_messages_meta(self, call):
+        with self._lock:
+            row = self._db.execute(
+                "SELECT COUNT(*) AS n, MAX(ts) AS last FROM user_messages "
+                "WHERE call = ?", (call,)).fetchone()
+        return {"count": row["n"] if row else 0,
+                "max_ts": row["last"] if row else None}
+
+    # ── 个人数据同步：历史轨迹 ──
+    # 一天一档，但按设备分开存：两台设备同一天各走各的，混成一行就没法再分开。
+    # 读的时候多台叠在一起，隔得近的点归并成一点（同一趟路两台手机都记了一遍）。
+    def sync_track_put(self, call, day, points, device="", limit=60000, now=None):
+        """写一台设备的那一天：与库里这一行并集（按时间戳去重）。"""
+        stamp = int(now if now is not None else datetime.now(timezone.utc).timestamp())
+        merged = {}
+        with self._lock:
+            row = self._db.execute(
+                "SELECT payload FROM user_tracks "
+                "WHERE call = ? AND day = ? AND device = ?",
+                (call, day, device or "")).fetchone()
+            if row and row["payload"]:
+                for point in _unpack_points(row["payload"]):
+                    merged[int(point.get("t") or 0)] = point
+            for point in points:
+                try:
+                    key = int(point.get("t") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if not key:
+                    continue
+                old = merged.get(key)
+                # 同一秒两条：留字段多的那条（心率 / 海拔只在其中一条时有值）
+                if old is None or len(point) > len(old):
+                    merged[key] = point
+            ordered = [merged[key] for key in sorted(merged)]
+            if len(ordered) > int(limit):
+                ordered = ordered[:int(limit)]
+            self._db.execute(
+                """INSERT INTO user_tracks (call, day, device, points, updated, payload)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(call, day, device) DO UPDATE SET
+                       points = excluded.points,
+                       updated = excluded.updated,
+                       payload = excluded.payload""",
+                (call, day, device or "", len(ordered), stamp, _pack_points(ordered)))
+            self._db.commit()
+        return len(ordered)
+
+    def sync_track_days(self, call):
+        """一天一行：点数按所有设备合起来算，另外告诉你这天有几台设备。"""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT day, SUM(points) AS points, COUNT(*) AS devices, "
+                "       MAX(updated) AS updated "
+                "FROM user_tracks WHERE call = ? GROUP BY day ORDER BY day DESC",
+                (call,)).fetchall()
+        return [{"day": row["day"], "points": row["points"] or 0,
+                 "devices": row["devices"],
+                 "updated": iso_of(row["updated"]) if row["updated"] else None}
+                for row in rows]
+
+    def sync_track_devices(self, call, day):
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT device, points, updated FROM user_tracks "
+                "WHERE call = ? AND day = ? ORDER BY updated DESC",
+                (call, day)).fetchall()
+        return [{"device": row["device"] or "", "points": row["points"] or 0,
+                 "updated": iso_of(row["updated"]) if row["updated"] else None}
+                for row in rows]
+
+    def sync_track(self, call, day, device=None):
+        """读一天。给 device 就只读那一台，不给就把所有设备合起来去重。"""
+        sql = "SELECT payload FROM user_tracks WHERE call = ? AND day = ?"
+        args = [call, day]
+        if device is not None:
+            sql += " AND device = ?"
+            args.append(device)
+        with self._lock:
+            rows = self._db.execute(sql, args).fetchall()
+        blobs = [row["payload"] for row in rows if row["payload"]]
+        if not blobs:
+            return None
+        return merge_points(blobs)
+
+    def sync_track_delete(self, call, day, device=None):
+        sql = "DELETE FROM user_tracks WHERE call = ? AND day = ?"
+        args = [call, day]
+        if device is not None:
+            sql += " AND device = ?"
+            args.append(device)
+        with self._lock:
+            cursor = self._db.execute(sql, args)
+            self._db.commit()
+        return cursor.rowcount
+
+    def sync_track_prune(self, call, keep_days=365):
+        with self._lock:
+            cursor = self._db.execute(
+                "DELETE FROM user_tracks WHERE call = ? AND day NOT IN "
+                "(SELECT day FROM user_tracks WHERE call = ? ORDER BY day DESC LIMIT ?)",
+                (call, call, int(keep_days)))
+            self._db.commit()
+        return cursor.rowcount
+
+    # ── 个人数据同步：云端备份 ──
+    def sync_backup_put(self, call, text, label="", keep=3, now=None):
+        stamp = int(now if now is not None else datetime.now(timezone.utc).timestamp())
+        bid = "%d-%04x" % (stamp, secrets.randbelow(0x10000))
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO user_backups (call, id, created, label, size, payload) "
+                "VALUES (?,?,?,?,?,?)",
+                (call, bid, stamp, (label or "")[:48], len(text),
+                 gzip.compress(text.encode("utf-8"))))
+            # 同一秒里传几份是常事，按写入顺序而不是时间戳排 —— 否则「最新那份」
+            # 会随机变成其中任一份。
+            self._db.execute(
+                "DELETE FROM user_backups WHERE call = ? AND rowid NOT IN "
+                "(SELECT rowid FROM user_backups WHERE call = ? "
+                " ORDER BY rowid DESC LIMIT ?)",
+                (call, call, int(keep)))
+            self._db.commit()
+        return {"id": bid, "created": iso_of(stamp), "label": (label or "")[:48],
+                "size": len(text)}
+
+    def sync_backup_list(self, call):
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, created, label, size FROM user_backups WHERE call = ? "
+                "ORDER BY rowid DESC", (call,)).fetchall()
+        return [{"id": row["id"],
+                 "created": iso_of(row["created"]) if row["created"] else None,
+                 "label": row["label"] or "", "size": row["size"] or 0}
+                for row in rows]
+
+    def sync_backup_get(self, call, bid):
+        with self._lock:
+            row = self._db.execute(
+                "SELECT payload FROM user_backups WHERE call = ? AND id = ?",
+                (call, bid)).fetchone()
+        if not row or not row["payload"]:
+            return None
+        try:
+            return gzip.decompress(row["payload"]).decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+
+    def sync_backup_delete(self, call, bid):
+        with self._lock:
+            cursor = self._db.execute(
+                "DELETE FROM user_backups WHERE call = ? AND id = ?", (call, bid))
+            self._db.commit()
+        return cursor.rowcount
+
+    def sync_overview(self):
+        """控制台用：每个呼号三类数据各有多少。"""
+        calls = set()
+        with self._lock:
+            for table in ("sync_devices", "user_messages", "user_tracks",
+                          "user_backups"):
+                for row in self._db.execute("SELECT DISTINCT call FROM %s" % table):
+                    calls.add(row["call"])
+        rows = []
+        for call in sorted(calls):
+            days = self.sync_track_days(call)
+            rows.append({
+                "call": call,
+                "devices": len(self.sync_devices(call)),
+                "messages": self.sync_messages_meta(call)["count"],
+                "track_days": len(days),
+                "track_points": sum(day["points"] for day in days),
+                "backups": len(self.sync_backup_list(call)),
+            })
+        return rows
+
+    def sync_clear(self, call):
+        """本人一键清空：消息、轨迹、备份一起走。
+
+        令牌与设备行不动 —— 清数据不该把人踢下线；要停用某台设备是另一个接口。
+        """
+        kept = 0
+        with self._lock:
+            for table in ("user_messages", "user_tracks", "user_backups"):
+                cursor = self._db.execute("DELETE FROM %s WHERE call = ?" % table, (call,))
+                kept += cursor.rowcount
+            self._db.commit()
+        return kept
+
     # ── 审计与元信息 ──
     def audit(self, kind, detail=None):
         with self._lock:
@@ -440,6 +825,83 @@ class Store:
     def close(self):
         with self._lock:
             self._db.close()
+
+
+def _pack_points(points):
+    """轨迹点落库：紧凑 JSON + gzip。一天几千个点，原样存占地方。"""
+    raw = json.dumps(points, ensure_ascii=False, separators=(",", ":"))
+    return gzip.compress(raw.encode("utf-8"))
+
+
+# 多台设备合并的口径：时间差 3 秒、距离 50 米以内的两个点当成同一个点。
+# 两台手机都开着记录时，同一趟路会各记一条；一个点都不能少，但也不能一条路上
+# 叠两条重复的线。
+MERGE_SECONDS = 3
+MERGE_METERS = 50.0
+
+
+def _point_ts(point):
+    try:
+        return int(point.get("t") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _meters(a, b):
+    """两个点之间的球面距离（米）。"""
+    try:
+        lat1, lon1 = float(a.get("lat")), float(a.get("lng"))
+        lat2, lon2 = float(b.get("lat")), float(b.get("lng"))
+    except (TypeError, ValueError):
+        return None
+    rad = 0.017453292519943295
+    dlat = (lat2 - lat1) * rad
+    dlon = (lon2 - lon1) * rad
+    value = (0.5 - math.cos(dlat) / 2
+             + math.cos(lat1 * rad) * math.cos(lat2 * rad)
+             * (1 - math.cos(dlon)) / 2)
+    return 12742000 * math.asin(math.sqrt(max(0.0, min(1.0, value))))
+
+
+def _same_spot(left, right):
+    if abs(_point_ts(left) - _point_ts(right)) > MERGE_SECONDS * 1000:
+        return False
+    gap = _meters(left, right)
+    return gap is not None and gap <= MERGE_METERS
+
+
+def _richer(new, keep):
+    """两条描述同一位置时留哪条：字段多的，其次是带心率的。"""
+    if len(new) != len(keep):
+        return len(new) > len(keep)
+    return "hr" in new and "hr" not in keep
+
+
+def merge_points(blobs):
+    """把多台设备的轨迹并成一条：按时间排，隔得近的重复点归并成一个。"""
+    points = []
+    for blob in blobs:
+        points.extend(_unpack_points(blob))
+    points.sort(key=_point_ts)
+    merged = []
+    for point in points:
+        if merged and _same_spot(merged[-1], point):
+            if _richer(point, merged[-1]):
+                merged[-1] = point
+            continue
+        merged.append(point)
+    return merged
+
+
+def _unpack_points(blob):
+    """读回来；坏了就当这一天没有，不能拖垮别人的同步。"""
+    if not blob:
+        return []
+    try:
+        data = json.loads(gzip.decompress(blob).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return []
+    return [point for point in data if isinstance(point, dict)] if isinstance(data, list) else []
 
 
 def _station_dict(call, row, packets):
