@@ -688,6 +688,148 @@ def test_devices():
        (store.station("BG6TC", now=stamp + 10) or {}).get("to_call") == "ZZZZZZ")
 
 
+def test_sync():
+    """个人数据同步：令牌与设备、消息并集、轨迹按天并集、云端备份。"""
+    # TCP 监听端口单独换一个：上一个实例的套接字还在 TIME_WAIT。
+    config.TCP_PORT = free_port()
+    node = Node()
+    store = node.store
+    store.save_account("BG5SYN", account="bg5syn",
+                       pass_hash=auth.hash_password("synpw"), status="authorized")
+    device = {"id": "dev01", "ver": "2.1.41", "platform": "android",
+              "abi": "arm64-v8a"}
+    # ① 登录
+    code, data = api_call("/api/v1/sync/login", "POST",
+                          {"account": "bg5syn", "password": "synpw",
+                           "device": device})
+    ok("同步登录拿到令牌", code == 200 and bool(data.get("token")), data.get("token"))
+    token = data.get("token") or ""
+    ok("同步登录回报呼号", data.get("call") == "BG5SYN", data.get("call"))
+    ok("同步登录记下安装指纹", data.get("device") == "dev01", data.get("device"))
+    code, _ = api_call("/api/v1/sync/login", "POST",
+                       {"account": "bg5syn", "password": "wrong",
+                        "device": device})
+    ok("同步登录错口令被拒", code == 401, code)
+    code, _ = api_call("/api/v1/sync/state")
+    ok("没有令牌取不到状态", code == 401, code)
+
+    # ② 消息：并集，不重复，已确认状态往上推
+    code, data = api_call("/api/v1/sync/messages", "POST", {"items": [
+        {"mid": "a1", "ts": 1000, "peer": "BG6TA", "dir": "in", "text": "hi"},
+        {"mid": "a2", "ts": 2000, "peer": "BG6TA", "dir": "out", "text": "yo"},
+    ]}, token=token)
+    ok("消息上传两条", code == 200 and data.get("added") == 2, data.get("added"))
+    code, data = api_call("/api/v1/sync/messages", "POST", {"items": [
+        {"mid": "a2", "ts": 2000, "acked": True},
+        {"mid": "a3", "ts": 3000, "text": "third"},
+    ]}, token=token)
+    ok("再传只新增没见过的", code == 200 and data.get("added") == 1, data.get("added"))
+    code, data = api_call("/api/v1/sync/messages?since=1500", token=token)
+    ok("增量拉回两条", [m["mid"] for m in data["messages"]] == ["a2", "a3"],
+       [m["mid"] for m in data["messages"]])
+    ok("已确认状态被推上去",
+       any(m["mid"] == "a2" and m["acked"] for m in data["messages"]))
+
+    # ③ 轨迹：按天并集
+    code, data = api_call("/api/v1/sync/tracks/2026-11-06", "PUT", {"points": [
+        {"t": 100, "lat": 39.9, "lng": 116.4},
+        {"t": 200, "lat": 39.91, "lng": 116.41},
+    ]}, token=token)
+    ok("轨迹上传第一天", code == 200 and data.get("points") == 2, data.get("points"))
+    code, data = api_call("/api/v1/sync/tracks/2026-11-06", "PUT", {"points": [
+        {"t": 200, "lat": 39.91, "lng": 116.41, "hr": 70},
+        {"t": 300, "lat": 39.92, "lng": 116.42},
+    ]}, token=token)
+    ok("同一天并集不重复", data.get("points") == 3, data.get("points"))
+    code, data = api_call("/api/v1/sync/tracks", token=token)
+    ok("轨迹天数报一天", [day["day"] for day in data["days"]] == ["2026-11-06"],
+       data.get("days"))
+    code, data = api_call("/api/v1/sync/tracks/2026-11-06", token=token)
+    ok("拉回那一天的点", len(data["points"]) == 3, len(data.get("points") or []))
+    ok("同一秒那条保留了心率",
+       any(point.get("hr") == 70 for point in data["points"]))
+    code, _ = api_call("/api/v1/sync/tracks/2026-13-99", "PUT", {"points": []},
+                       token=token)
+    ok("日期写错被拒", code == 400, code)
+
+    # ③b 第二台设备：同一天各存各的，读的时候合并去重
+    code, data = api_call("/api/v1/sync/login", "POST",
+                          {"account": "bg5syn", "password": "synpw",
+                           "device": {"id": "dev02", "ver": "2.1.41"}})
+    token_b = data.get("token") or ""
+    code, data = api_call("/api/v1/sync/tracks/2026-11-06", "PUT", {"points": [
+        {"t": 301, "lat": 39.9201, "lng": 116.4201},
+        {"t": 400, "lat": 39.93, "lng": 116.43},
+    ]}, token=token_b)
+    ok("第二台设备上传自己那一天", code == 200 and data.get("points") == 2,
+       data.get("points"))
+    code, data = api_call("/api/v1/sync/tracks/2026-11-06", token=token)
+    ok("两台设备的轨迹并成一条", len(data["points"]) == 4,
+       len(data.get("points") or []))
+    ok("同一位置的点只留一个",
+       sum(1 for point in data["points"] if point.get("t") in (300, 301)) == 1,
+       [point.get("t") for point in data["points"]])
+    ok("读回时列出这天有哪几台设备", len(data.get("devices") or []) == 2,
+       data.get("devices"))
+    code, data = api_call("/api/v1/sync/tracks/2026-11-06?device=dev02", token=token)
+    ok("指定设备只读那一台", [point["t"] for point in data["points"]] == [301, 400],
+       [point["t"] for point in data["points"]])
+
+    # ④ 备份：整份原样，最多留三份
+    doc = {"schema": 3, "appVersion": "2.1.41",
+           "groups": {"settings": {"myCall": "BG5SYN"}}}
+    code, data = api_call("/api/v1/sync/backup?label=phone", "PUT", doc, token=token)
+    ok("备份上传成功", code == 200 and data["backup"]["size"] > 0,
+       data.get("backup"))
+    bid = (data.get("backup") or {}).get("id") or ""
+    code, data = api_call("/api/v1/sync/backup", token=token)
+    ok("备份列表有一份", len(data["backups"]) == 1 and
+       data["backups"][0]["label"] == "phone", data.get("backups"))
+    code, data = api_call("/api/v1/sync/backup/" + bid, token=token)
+    ok("原样取回那份备份", code == 200 and data.get("appVersion") == "2.1.41", code)
+    for index in range(4):
+        api_call("/api/v1/sync/backup?label=p%d" % index, "PUT", doc, token=token)
+    code, data = api_call("/api/v1/sync/backup", token=token)
+    ok("备份只留三份", len(data["backups"]) == 3, len(data.get("backups") or []))
+    ok("留下的是最新的三份", data["backups"][0]["label"] == "p3",
+       data["backups"][0]["label"])
+
+    # ⑤ 状态
+    code, data = api_call("/api/v1/sync/state", token=token)
+    ok("状态里有设备与三类数据",
+       data.get("messages", {}).get("count") == 3 and
+       data.get("tracks", {}).get("days") == 1 and
+       len(data.get("devices") or []) == 2, data.get("devices"))
+
+    # ⑥ 撤设备：它的令牌立刻失效
+    code, data = api_call("/api/v1/sync/devices/dev01", "DELETE", token=token)
+    ok("撤设备时撤掉令牌", code == 200 and data.get("revoked", 0) >= 1,
+       data.get("revoked"))
+    code, _ = api_call("/api/v1/sync/state", token=token)
+    ok("撤掉的令牌不能再用", code == 401, code)
+
+    # ⑦ 本人清空：数据没了，会话还在
+    code, data = api_call("/api/v1/sync/login", "POST",
+                          {"account": "bg5syn", "password": "synpw",
+                           "device": {"id": "dev02"}})
+    token2 = data.get("token") or ""
+    code, data = api_call("/api/v1/sync", "DELETE", token=token2)
+    ok("本人清空云端数据", code == 200 and data.get("removed", 0) >= 3,
+       data.get("removed"))
+    code, data = api_call("/api/v1/sync/state", token=token2)
+    ok("清空后三类都是空的",
+       data.get("messages", {}).get("count") == 0 and
+       data.get("tracks", {}).get("days") == 0 and
+       not data.get("backups"), data.get("messages"))
+
+    # ⑧ 控制台能看
+    code, data = api_call("/api/admin/sync", admin="test-admin")
+    ok("控制台能看到同步账号",
+       code == 200 and any(row["call"] == "BG5SYN" for row in data["rows"]), code)
+    node.stop()
+    config.TCP_PORT = TCP_PORT
+
+
 def main():
     test_passcode()
     test_parse()
@@ -695,6 +837,7 @@ def main():
     test_end_to_end()
     test_ingest()
     test_devices()
+    test_sync()
     print("\n%d 项，过了 %d 项" % (len(PASSED) + len(FAILED), len(PASSED)))
     if FAILED:
         print("没过：" + "、".join(FAILED))

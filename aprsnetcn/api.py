@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import re
@@ -91,6 +92,28 @@ class Api:
                 window.pop(0)
             return len(window) <= config.PUBLIC_RATE_MINUTE
 
+    # ── 个人数据同步的令牌 ──
+    def sync_issue(self, call, device):
+        """口令换一个长期令牌；库只存哈希。"""
+        token = auth.new_token()
+        expires = self.store.sync_put_token(auth.token_hash(token), call, device,
+                                            config.SYNC_TOKEN_TTL)
+        return token, expires
+
+    def sync_owner(self, token):
+        if not token:
+            return None
+        return self.store.sync_token(auth.token_hash(token))
+
+
+def _day_ok(day):
+    """轨迹档名只能是真实存在的日期（`2026-13-99` 这种不算）。"""
+    try:
+        datetime.strptime((day or "").strip(), "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return False
+    return True
+
 
 def _bbox(value):
     if not value:
@@ -158,7 +181,7 @@ def _handler_class(api):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Headers",
                              "Authorization, Content-Type, X-ACN-Token")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 
         def _json(self, status, payload):
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -180,14 +203,33 @@ def _handler_class(api):
             self.wfile.write(body)
 
         def _body(self):
-            length = int(self.headers.get("Content-Length") or 0)
-            if length <= 0 or length > 1 << 20:
+            raw = self._raw()
+            if not raw:
                 return {}
-            raw = self.rfile.read(length)
             try:
-                return json.loads(raw.decode("utf-8"))
+                data = json.loads(raw.decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
                 return {}
+            return data if isinstance(data, dict) else {}
+
+        def _raw(self, limit=None):
+            """请求体原始字节。支持 gzip 压缩（备份与轨迹比较大）。
+
+            上限默认 8 MB：一天的轨迹与一份备份都能整份进来；再大就当没收。
+            """
+            length = int(self.headers.get("Content-Length") or 0)
+            cap = int(limit or config.HTTP_MAX_BODY)
+            if length <= 0 or length > cap:
+                return None
+            raw = self.rfile.read(length)
+            if (self.headers.get("Content-Encoding") or "").lower() == "gzip":
+                try:
+                    raw = gzip.decompress(raw)
+                except OSError:
+                    return None
+                if len(raw) > cap * 4:
+                    return None
+            return raw
 
         def _bearer(self):
             header = self.headers.get("Authorization") or ""
@@ -242,6 +284,20 @@ def _handler_class(api):
                     return self._stations(query)
                 if path.startswith("/api/v1/stations/"):
                     return self._station(path.rsplit("/", 1)[-1])
+                if path == "/api/v1/sync/state":
+                    return self._sync_state()
+                if path == "/api/v1/sync/messages":
+                    return self._sync_messages_list(query)
+                if path == "/api/v1/sync/tracks":
+                    return self._sync_track_days()
+                if path.startswith("/api/v1/sync/tracks/"):
+                    return self._sync_track(path.rsplit("/", 1)[-1])
+                if path == "/api/v1/sync/backup":
+                    return self._sync_backup_list()
+                if path.startswith("/api/v1/sync/backup/"):
+                    return self._sync_backup(path.rsplit("/", 1)[-1])
+                if path == "/api/admin/sync":
+                    return self._admin_sync()
                 if path == "/api/admin/state":
                     return self._admin_state()
                 if path == "/api/admin/clients":
@@ -274,6 +330,12 @@ def _handler_class(api):
             try:
                 if path == "/api/v1/login":
                     return self._login()
+                if path == "/api/v1/sync/login":
+                    return self._sync_login()
+                if path == "/api/v1/sync/logout":
+                    return self._sync_logout()
+                if path == "/api/v1/sync/messages":
+                    return self._sync_messages_put()
                 if path == "/api/admin/account":
                     return self._admin_account()
                 if path == "/api/admin/account/delete":
@@ -288,6 +350,35 @@ def _handler_class(api):
                     return self._admin_settings_reset()
                 if path == "/api/manager/whitelist":
                     return self._manager_publish()
+                return self._json(404, {"error": "not-found"})
+            except Exception as error:                     # noqa: BLE001
+                return self._json(500, {"error": "server-error", "message": str(error)})
+
+        def do_PUT(self):
+            parsed = urlparse(self.path)
+            path = parsed.path.rstrip("/") or "/"
+            query = parse_qs(parsed.query)
+            try:
+                if path.startswith("/api/v1/sync/tracks/"):
+                    return self._sync_track_put(path.rsplit("/", 1)[-1])
+                if path == "/api/v1/sync/backup":
+                    return self._sync_backup_put(query)
+                return self._json(404, {"error": "not-found"})
+            except Exception as error:                     # noqa: BLE001
+                return self._json(500, {"error": "server-error", "message": str(error)})
+
+        def do_DELETE(self):
+            parsed = urlparse(self.path)
+            path = parsed.path.rstrip("/") or "/"
+            try:
+                if path == "/api/v1/sync":
+                    return self._sync_clear()
+                if path.startswith("/api/v1/sync/tracks/"):
+                    return self._sync_track_delete(path.rsplit("/", 1)[-1])
+                if path.startswith("/api/v1/sync/backup/"):
+                    return self._sync_backup_delete(path.rsplit("/", 1)[-1])
+                if path.startswith("/api/v1/sync/devices/"):
+                    return self._sync_device_delete(path.rsplit("/", 1)[-1])
                 return self._json(404, {"error": "not-found"})
             except Exception as error:                     # noqa: BLE001
                 return self._json(500, {"error": "server-error", "message": str(error)})
@@ -789,6 +880,271 @@ def _handler_class(api):
             dropped = api.enforce_whitelist("whitelist-synced")
             self._json(200, {"ok": True, "version": version, "records": count,
                              "mode": mode, "dropped": dropped})
+
+        # ── 个人数据同步（消息 / 备份 / 历史轨迹）──
+        # 一个呼号 + 一个长期令牌，三类数据都走它的。令牌落库只存哈希，
+        # 撤销是按呼号或按设备整批置位，不是删行（留痕）。
+        def _sync_record(self):
+            """认令牌。认不下来已经自己答了 401/429，返回 None。"""
+            if not config.SYNC_ENABLED:
+                self._json(403, {"error": "sync-disabled"})
+                return None
+            token = self._bearer()
+            record = api.sync_owner(token)
+            if not record:
+                self._json(401, {"error": "unauthorized"})
+                return None
+            if not api.rate_ok(token):
+                self._json(429, {"error": "rate-limited"})
+                return None
+            return record
+
+        def _sync_login(self):
+            """口令换长期令牌；顺手记下这台设备（安装指纹 + 版本 + 平台）。"""
+            body = self._body()
+            account = (body.get("account") or "").strip().lower()
+            password = body.get("password") or ""
+            device = body.get("device") if isinstance(body.get("device"), dict) else {}
+            record = api.store.account_by_name(account)
+            now = store_module.now_iso()
+            if record is None or not auth.verify_password(password, record["pass_hash"]):
+                api.store.audit("sync-login-failed", {"account": account})
+                return self._json(401, {"error": "bad-credentials"})
+            allowed, reason = auth.may_login(record, now)
+            if not allowed:
+                return self._json(403, {"error": "not-authorized", "reason": reason})
+            call = record["call"]
+            did = (device.get("id") or "").strip()[:64]
+            api.store.sync_device(call, did, device.get("ver") or "",
+                                  device.get("platform") or "", device.get("abi") or "")
+            token, expires = api.sync_issue(call, did)
+            api.store.audit("sync-login", {"account": account, "call": call,
+                                           "device": did})
+            self._json(200, {
+                "ok": True,
+                "token": token,
+                "call": call,
+                "device": did,
+                "expires": datetime.fromtimestamp(expires, BEIJING).isoformat(timespec="seconds"),
+            })
+
+        def _sync_logout(self):
+            record = self._sync_record()
+            if not record:
+                return
+            api.store.sync_revoke(record["call"], token_hash=record["token_hash"])
+            self._json(200, {"ok": True})
+
+        def _sync_state(self):
+            record = self._sync_record()
+            if not record:
+                return
+            call = record["call"]
+            messages = api.store.sync_messages_meta(call)
+            days = api.store.sync_track_days(call)
+            self._json(200, {
+                "ok": True,
+                "call": call,
+                "device": record["device"] or "",
+                "server_time": store_module.now_iso(),
+                "devices": api.store.sync_devices(call),
+                "messages": {
+                    "count": messages["count"],
+                    "last": (store_module.iso_of(messages["max_ts"])
+                             if messages["max_ts"] else None),
+                },
+                "tracks": {
+                    "days": len(days),
+                    "first": days[-1]["day"] if days else None,
+                    "last": days[0]["day"] if days else None,
+                    "points": sum(day["points"] for day in days),
+                },
+                "backups": api.store.sync_backup_list(call),
+            })
+
+        def _sync_messages_put(self):
+            record = self._sync_record()
+            if not record:
+                return
+            body = self._body()
+            items = body.get("items")
+            if not isinstance(items, list):
+                return self._json(400, {"error": "bad-items"})
+            cap = max(1, min(1000, config.SYNC_BATCH))
+            items = [item for item in items if isinstance(item, dict)][:cap]
+            added = api.store.sync_messages_put(record["call"], items,
+                                               limit=config.SYNC_MSG_LIMIT)
+            meta = api.store.sync_messages_meta(record["call"])
+            self._json(200, {"ok": True, "added": added, "count": meta["count"],
+                             "last": (store_module.iso_of(meta["max_ts"])
+                                      if meta["max_ts"] else None),
+                             "server_time": store_module.now_iso()})
+
+        def _sync_messages_list(self, query):
+            record = self._sync_record()
+            if not record:
+                return
+            try:
+                since = int((query.get("since") or ["0"])[0] or 0)
+                limit = max(1, min(config.SYNC_BATCH, 2000,
+                                   int((query.get("limit") or ["500"])[0] or 500)))
+                offset = max(0, int((query.get("offset") or ["0"])[0] or 0))
+            except ValueError:
+                return self._json(400, {"error": "bad-params"})
+            rows = api.store.sync_messages(record["call"], since=since,
+                                           limit=limit, offset=offset)
+            self._json(200, {"ok": True, "count": len(rows), "messages": rows,
+                             "since": since, "offset": offset, "limit": limit,
+                             "server_time": store_module.now_iso()})
+
+        def _sync_track_put(self, day):
+            record = self._sync_record()
+            if not record:
+                return
+            if not _day_ok(day):
+                return self._json(400, {"error": "bad-day"})
+            raw = self._raw()
+            if not raw:
+                return self._json(400, {"error": "empty-body"})
+            try:
+                body = json.loads(raw.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                return self._json(400, {"error": "bad-json"})
+            points = body.get("points") if isinstance(body, dict) else body
+            if not isinstance(points, list):
+                return self._json(400, {"error": "bad-points"})
+            cleaned = []
+            for point in points[:config.SYNC_TRACK_POINTS]:
+                if not isinstance(point, dict):
+                    continue
+                try:
+                    stamp = int(point.get("t") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if not stamp:
+                    continue
+                cleaned.append({key: point[key] for key in
+                                ("t", "lat", "lng", "v", "c", "a", "acc", "hr")
+                                if key in point})
+            total = api.store.sync_track_put(record["call"], day, cleaned,
+                                             device=record["device"] or "",
+                                             limit=config.SYNC_TRACK_POINTS)
+            api.store.sync_track_prune(record["call"], keep_days=config.SYNC_TRACK_DAYS)
+            self._json(200, {"ok": True, "day": day, "points": total,
+                             "device": record["device"] or "",
+                             "sent": len(cleaned),
+                             "server_time": store_module.now_iso()})
+
+        def _sync_track_days(self):
+            record = self._sync_record()
+            if not record:
+                return
+            self._json(200, {"ok": True, "days": api.store.sync_track_days(record["call"]),
+                             "server_time": store_module.now_iso()})
+
+        def _sync_track(self, day):
+            record = self._sync_record()
+            if not record:
+                return
+            if not _day_ok(day):
+                return self._json(400, {"error": "bad-day"})
+            query = parse_qs(urlparse(self.path).query)
+            device = (query.get("device") or [""])[0]
+            points = api.store.sync_track(record["call"], day,
+                                          device=device or None)
+            if points is None:
+                return self._json(404, {"error": "not-found"})
+            self._json(200, {"ok": True, "day": day,
+                             "device": device or None, "points": points,
+                             "devices": api.store.sync_track_devices(record["call"], day)})
+
+        def _sync_track_delete(self, day):
+            record = self._sync_record()
+            if not record:
+                return
+            query = parse_qs(urlparse(self.path).query)
+            device = (query.get("device") or [""])[0]
+            removed = api.store.sync_track_delete(record["call"], day,
+                                                  device=device or None)
+            self._json(200, {"ok": True, "day": day, "device": device or None,
+                             "removed": removed})
+
+        def _sync_backup_put(self, query):
+            """上传一份备份。请求体就是那份备份本身（JSON），不再套一层。"""
+            record = self._sync_record()
+            if not record:
+                return
+            raw = self._raw()
+            if not raw:
+                return self._json(400, {"error": "empty-body"})
+            try:
+                text = raw.decode("utf-8")
+                doc = json.loads(text)
+            except (ValueError, UnicodeDecodeError):
+                return self._json(400, {"error": "bad-json"})
+            if not isinstance(doc, dict):
+                return self._json(400, {"error": "bad-backup"})
+            label = (query.get("label") or [""])[0][:48]
+            info = api.store.sync_backup_put(record["call"], text, label=label,
+                                             keep=config.SYNC_BACKUPS)
+            api.store.audit("sync-backup", {"call": record["call"],
+                                            "id": info["id"], "size": info["size"]})
+            self._json(200, {"ok": True, "backup": info,
+                             "backups": api.store.sync_backup_list(record["call"])})
+
+        def _sync_backup_list(self):
+            record = self._sync_record()
+            if not record:
+                return
+            self._json(200, {"ok": True,
+                             "backups": api.store.sync_backup_list(record["call"]),
+                             "server_time": store_module.now_iso()})
+
+        def _sync_backup(self, bid):
+            record = self._sync_record()
+            if not record:
+                return
+            text = api.store.sync_backup_get(record["call"], bid)
+            if text is None:
+                return self._json(404, {"error": "not-found"})
+            try:
+                return self._json(200, json.loads(text))
+            except ValueError:
+                return self._json(500, {"error": "broken-backup"})
+
+        def _sync_backup_delete(self, bid):
+            record = self._sync_record()
+            if not record:
+                return
+            removed = api.store.sync_backup_delete(record["call"], bid)
+            self._json(200, {"ok": True, "removed": removed,
+                             "backups": api.store.sync_backup_list(record["call"])})
+
+        def _sync_device_delete(self, device):
+            """去掉一台设备：它的令牌全部作废，数据留着。"""
+            record = self._sync_record()
+            if not record:
+                return
+            revoked = api.store.sync_drop_device(record["call"], device)
+            api.store.audit("sync-device-drop", {"call": record["call"],
+                                                 "device": device, "revoked": revoked})
+            self._json(200, {"ok": True, "revoked": revoked,
+                             "devices": api.store.sync_devices(record["call"])})
+
+        def _sync_clear(self):
+            record = self._sync_record()
+            if not record:
+                return
+            removed = api.store.sync_clear(record["call"])
+            api.store.audit("sync-clear", {"call": record["call"], "removed": removed})
+            self._json(200, {"ok": True, "removed": removed})
+
+        def _admin_sync(self):
+            if not self._admin_ok():
+                return self._json(401, {"error": "unauthorized"})
+            self._json(200, {"ok": True, "rows": api.store.sync_overview(),
+                             "enabled": config.SYNC_ENABLED,
+                             "time": store_module.now_iso()})
 
         # ── 设置 ──
         def _admin_settings(self):
