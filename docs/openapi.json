@@ -712,7 +712,8 @@
         "tags": [
           "sync"
         ],
-        "summary": "增量拉消息",
+        "summary": "增量拉消息（since=0 就是整份）",
+  "description": "这个人云上的消息，按时间升序。带 total（一共多少条）与 more（后面还有没有一页），单页最多 2000 条。每条带 src：client 是客户端自己传的，aprs 是服务器看着报文记下的。",
         "security": [
           {
             "bearer": []
