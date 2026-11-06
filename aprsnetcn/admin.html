@@ -33,6 +33,7 @@
   <button data-tab="packets" type="button">报文</button>
   <button data-tab="stations" type="button">台站</button>
   <button data-tab="names" type="button">名单</button>
+  <button data-tab="sync" type="button">同步</button>
   <button data-tab="settings" type="button">设置</button>
   <button data-tab="audits" type="button">审计</button>
 </nav>
@@ -223,6 +224,22 @@
         <button class="primary" id="saveBtn" type="button">保存这一条</button>
         <span class="note" id="saveNote"></span>
       </div>
+    </div>
+  </section>
+
+  <!-- 云同步：每个呼号在云端存了什么（只读） -->
+  <section class="tab" data-panel="sync">
+    <div class="block">
+      <h2>云同步</h2>
+      <div class="row">
+        <button id="syncRefresh" type="button">重读</button>
+        <span class="note" id="syncNote"></span>
+      </div>
+      <table>
+        <thead><tr><th>呼号</th><th>设备</th><th>消息</th><th>轨迹天</th><th>轨迹点</th><th>备份</th></tr></thead>
+        <tbody id="syncRows"></tbody>
+      </table>
+      <p class="note">设备数是这个呼号登录过的安装指纹。数据属于他自己的账号，这里只看不改。</p>
     </div>
   </section>
 
