@@ -1029,13 +1029,14 @@
         '<td class="mono">' + esc(row.call) + '</td>' +
         '<td>' + esc(String(row.devices || 0)) + '</td>' +
         '<td>' + esc(String(row.messages || 0)) + '</td>' +
+        '<td>' + esc(String(row.cached || 0)) + '</td>' +
         '<td>' + esc(String(row.track_days || 0)) + '</td>' +
         '<td>' + esc(String(row.track_points || 0)) + '</td>' +
         '<td>' + esc(String(row.backups || 0)) + '</td>' +
         '</tr>';
     });
     $('syncRows').innerHTML = html ||
-      '<tr><td colspan="6" class="note">还没有人用过云同步。</td></tr>';
+      '<tr><td colspan="7" class="note">还没有人用过云同步。</td></tr>';
   }
 
   function loadSync() {

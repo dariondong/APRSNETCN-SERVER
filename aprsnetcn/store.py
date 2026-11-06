@@ -799,7 +799,11 @@ class Store:
         return cursor.rowcount
 
     def sync_overview(self):
-        """控制台用：每个呼号三类数据各有多少。"""
+        """控制台用：每个呼号三类数据各有多少。
+
+        `cached` 是其中由服务器自己看着报文记下的条数（消息表的 src 列）：
+        跟客户端传上来的一起算在 `messages` 里。
+        """
         calls = set()
         with self._lock:
             for table in ("sync_devices", "user_messages", "user_tracks",
@@ -809,10 +813,15 @@ class Store:
         rows = []
         for call in sorted(calls):
             days = self.sync_track_days(call)
+            with self._lock:
+                cached = self._db.execute(
+                    "SELECT COUNT(*) AS n FROM user_messages "
+                    "WHERE call = ? AND src = 'aprs'", (call,)).fetchone()["n"]
             rows.append({
                 "call": call,
                 "devices": len(self.sync_devices(call)),
                 "messages": self.sync_messages_meta(call)["count"],
+                "cached": cached,
                 "track_days": len(days),
                 "track_points": sum(day["points"] for day in days),
                 "backups": len(self.sync_backup_list(call)),
