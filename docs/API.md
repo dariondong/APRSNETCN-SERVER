@@ -87,6 +87,106 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   'http://8.138.199.11:8899/api/v1/stations/BG7LZQ-9'
 ```
 
+## 个人数据同步（消息 / 备份 / 历史轨迹）
+
+一个人的三类本机数据可以存到这台服务器上，换设备或重装之后拉回来：
+
+- **消息**：收发的私聊与群聊记录，按条并集。
+- **云端备份**：整份备份文件（设置、台站、消息、群聊、翻译、荣誉、主题），每人最多三份。
+- **历史轨迹**：按天存，保留一年，多台设备各自上传、读的时候合成一条。
+
+账号就是名单里那条记录的呼号与口令（与控制台里发的账号一致），不另开注册。
+
+### 登录换令牌
+
+```bash
+curl -s -X POST http://8.138.199.11:8899/api/v1/sync/login \
+  -H 'Content-Type: application/json' \
+  -d '{"account":"bg7lzq","password":"……",
+       "device":{"id":"9f2c…","ver":"2.1.41","platform":"android","abi":"arm64-v8a"}}'
+```
+
+```json
+{"ok": true, "token": "…", "call": "BG7LZQ", "device": "9f2c…",
+ "expires": "2027-02-04T13:00:00+08:00"}
+```
+
+`device.id` 是客户端自己的安装标识（随机生成一次、存在本机），`ver` / `platform` / `abi`
+只是让人在控制台里认得出哪台是哪台。令牌默认 90 天，同一台设备再登录一次就换新的，
+旧的仍然有效到过期；要停用一台设备就调下面的设备接口。
+
+后面所有请求都带 `Authorization: Bearer <token>`。这套令牌与 `/api/v1/stations` 的
+token 是两套：前者长效、落库，后者 12 小时、只在内存里。
+
+**目前这台机器是 HTTP**，口令与数据都不过 TLS。同步页在登录前会如实提示这一点。
+
+### 状态
+
+```
+GET /api/v1/sync/state
+```
+
+回这个呼号在云端有什么：`devices`（设备指纹 + 版本 + 最后同步时间）、
+`messages`（条数与最新一条的时间）、`tracks`（天数、最早与最新一天、总点数）、
+`backups`（每份的 `id` / `created` / `label` / `size`）。客户端先看它决定要不要拉。
+
+### 消息
+
+```
+POST /api/v1/sync/messages        {"items":[{"mid":"…","ts":1793942184000,
+                                   "peer":"BG6TA","dir":"in|out","text":"…",
+                                   "acked":false,"grp":"…"}]}
+GET  /api/v1/sync/messages?since=<毫秒>&limit=500&offset=0
+```
+
+`mid` 由客户端生成（呼号 + 方向 + 时间 + 文本的指纹），同一条消息在两台设备上算出来一样，
+所以并集不会重复。`acked` 只往「已确认」上推，不会被后到的 `false` 改回去。
+每人留最近 `ACN_SYNC_MSG_LIMIT`（默认 5000）条，超出从最早删。
+
+### 历史轨迹
+
+```
+PUT    /api/v1/sync/tracks/{day}   {"points":[{"t":…,"lat":…,"lng":…,"v":…,"c":…,"a":…,"acc":…,"hr":…}]}
+GET    /api/v1/sync/tracks                    这人的全部天：day / points / devices / updated
+GET    /api/v1/sync/tracks/{day}[?device=…]   那一天的点；不带 device 就是多台合起来的
+DELETE /api/v1/sync/tracks/{day}[?device=…]   删那一天（或那一台设备的那一天）
+```
+
+`day` 是本地日期 `YYYY-MM-DD`。**按设备分开存**：同一个呼号的两台设备同一天各存一行，
+谁也不覆盖谁。上传是并集（同一时间戳去重，字段多的那条优先），重复上传同一批点不会变多。
+
+读回时默认把这一天所有设备的点合成一条线：按时间排，时间差 3 秒内、距离 50 米以内的两个点
+算同一个点，只留一条（两台手机同时记录同一趟路就是这个情形）。想只要某一台的就带 `device=`。
+
+每人保留 `ACN_SYNC_TRACK_DAYS`（默认 365）天，单天不超过 `ACN_SYNC_TRACK_POINTS`（默认 60000）点。
+
+### 云端备份
+
+```
+PUT    /api/v1/sync/backup?label=phone    请求体就是那份备份本身（JSON）
+GET    /api/v1/sync/backup                列表（id / created / label / size）
+GET    /api/v1/sync/backup/{id}           原样取回那份备份
+DELETE /api/v1/sync/backup/{id}
+```
+
+备份不合并，每台设备上传的是一份独立的档，最多留 `ACN_SYNC_BACKUPS`（默认 3）份，
+新的进来时最旧的一份丢掉。`label` 只是备注（设备名、时间由客户端自己写）。
+
+### 设备与清空
+
+```
+DELETE /api/v1/sync/devices/{device}   停用这台设备：它的令牌全部作废，数据留着
+DELETE /api/v1/sync                     清空这个呼号的云端数据（令牌不动，会话还在）
+POST   /api/v1/sync/logout              只作废当前这个令牌
+```
+
+### 实现细节
+
+- 请求体上限 `ACN_HTTP_MAX_BODY`（默认 8 MB），支持 `Content-Encoding: gzip`。
+- 轨迹与备份在库里是 gzip 存的，一天几千个点也就几十 KB。
+- 同步接口跟其它带 token 的接口共用每分钟 `ACN_API_RATE_MINUTE`（默认 120）的限额。
+- 整台关掉：`ACN_SYNC_ENABLED=0`，所有 `/api/v1/sync/*` 回 `403 sync-disabled`。
+
 ## 台站页与公开接口
 
 ```
@@ -173,10 +273,12 @@ env 只给启动时的默认值。控制台「设置」页改的值存进库（`
 | 状态码 | `error` | 含义 |
 | --- | --- | --- |
 | 400 | `bad-bbox` / `bad-since` / `bad-limit` / `bad-before` | 参数写错 |
+| 400 | `bad-items` / `bad-points` / `bad-day` / `bad-json` / `empty-body` | 同步接口的请求体写错，或轨迹日期不是真日期 |
 | 401 | `unauthorized` | 没带 token 或已过期 |
 | 401 | `bad-credentials` | 账号或密码不对 |
 | 403 | `not-authorized` | 名单里没有，或授权已过期、已暂停、已撤销；名单过期没同步时 `reason` 是 `whitelist-stale` |
 | 403 | `not-public` | 台站数据没对外开（`ACN_PUBLIC_API=0`）|
+| 403 | `sync-disabled` | 这台服务器没开个人数据同步（`ACN_SYNC_ENABLED=0`）|
 | 404 | `not-found` | 台站不在 24 小时窗口里 |
 | 429 | `rate-limited` | 这个 IP 调公开接口太密（`/api/public/*`） |
 | 429 | `rate-limited` | 这个 token 请求太密 |

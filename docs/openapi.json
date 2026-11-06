@@ -24,6 +24,10 @@
     {
       "name": "public",
       "description": "不用 token 的公开接口与页面"
+    },
+    {
+      "name": "sync",
+      "description": "个人数据同步：消息 / 云端备份 / 历史轨迹（长期令牌）"
     }
   ],
   "components": {
@@ -31,6 +35,12 @@
       "bearer": {
         "type": "http",
         "scheme": "bearer"
+      },
+      "admin": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-ACN-Token",
+        "description": "管理口令"
       }
     },
     "schemas": {
@@ -580,6 +590,641 @@
           },
           "403": {
             "description": "台站数据没对外开（ACN_PUBLIC_API=0）"
+          }
+        }
+      }
+    },
+    "/api/v1/sync/login": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "名单账号换长期同步令牌，并记下这台设备",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "account",
+                  "password"
+                ],
+                "properties": {
+                  "account": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "device": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "客户端安装标识（随机生成一次，存在本机）"
+                      },
+                      "ver": {
+                        "type": "string"
+                      },
+                      "platform": {
+                        "type": "string"
+                      },
+                      "abi": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "令牌、呼号、设备指纹与到期时间"
+          },
+          "401": {
+            "description": "账号或口令不对"
+          },
+          "403": {
+            "description": "名单里没有，或已过期/暂停/撤销"
+          }
+        }
+      }
+    },
+    "/api/v1/sync/logout": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "作废当前这个令牌",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已作废"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          }
+        }
+      }
+    },
+    "/api/v1/sync/state": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "云端有什么：设备、消息条数、轨迹天数、备份列表",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "同步情况"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          }
+        }
+      }
+    },
+    "/api/v1/sync/messages": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "增量拉消息",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "只要这个毫秒时间戳之后的"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 500
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "消息列表"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "增量推消息（按 mid 并集）",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "mid",
+                        "ts"
+                      ],
+                      "properties": {
+                        "mid": {
+                          "type": "string"
+                        },
+                        "ts": {
+                          "type": "integer"
+                        },
+                        "peer": {
+                          "type": "string"
+                        },
+                        "dir": {
+                          "type": "string",
+                          "enum": [
+                            "in",
+                            "out"
+                          ]
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "acked": {
+                          "type": "boolean"
+                        },
+                        "grp": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "新增条数与总数"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          }
+        }
+      }
+    },
+    "/api/v1/sync/tracks": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "这人的全部轨迹天：点数、设备数、更新时间",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "按天列出"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          }
+        }
+      }
+    },
+    "/api/v1/sync/tracks/{day}": {
+      "parameters": [
+        {
+          "name": "day",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "本地日期 YYYY-MM-DD"
+        },
+        {
+          "name": "device",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          },
+          "description": "只读写这一台设备的那一天；不带就是多台合起来"
+        }
+      ],
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "拉一天的轨迹点（默认多设备合并去重）",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "那天的点"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          },
+          "404": {
+            "description": "那天没有数据"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "上传一天（写进当前令牌对应的这台设备）",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "points": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "t",
+                        "lat",
+                        "lng"
+                      ],
+                      "properties": {
+                        "t": {
+                          "type": "integer"
+                        },
+                        "lat": {
+                          "type": "number"
+                        },
+                        "lng": {
+                          "type": "number"
+                        },
+                        "v": {
+                          "type": "number"
+                        },
+                        "c": {
+                          "type": "number"
+                        },
+                        "a": {
+                          "type": "number"
+                        },
+                        "acc": {
+                          "type": "number"
+                        },
+                        "hr": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "并集后的点数"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "删一天的轨迹",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删掉的条数"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          }
+        }
+      }
+    },
+    "/api/v1/sync/backup": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "云端备份列表",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "每人最多三份"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "上传一份备份（请求体就是那份备份）",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "label",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "备注，例如 手机 / 平板"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "新备份的 id 与列表"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          }
+        }
+      }
+    },
+    "/api/v1/sync/backup/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "取回那份备份（原样）",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "备份内容"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          },
+          "404": {
+            "description": "没有这份"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "删掉这份备份",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已删"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          }
+        }
+      }
+    },
+    "/api/v1/sync/devices/{device}": {
+      "delete": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "停用一台设备（它的令牌全部作废，数据留着）",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "作废的令牌数"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          }
+        }
+      }
+    },
+    "/api/v1/sync": {
+      "delete": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "清空这个呼号的云端数据（令牌不动）",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删掉的行数"
+          },
+          "401": {
+            "description": "没有令牌或令牌已过期/被撤"
+          },
+          "403": {
+            "description": "这台服务器没开同步"
+          },
+          "429": {
+            "description": "请求太密"
+          }
+        }
+      }
+    },
+    "/api/admin/sync": {
+      "get": {
+        "tags": [
+          "sync",
+          "admin"
+        ],
+        "summary": "控制台：每个呼号的同步数据概况",
+        "security": [
+          {
+            "admin": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "按呼号列出"
           }
         }
       }
