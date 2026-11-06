@@ -950,7 +950,7 @@ def _handler_class(api):
                 "devices": api.store.sync_devices(call),
                 "messages": {
                     "count": messages["count"],
-                    "last": (store_module.iso_of(messages["max_ts"])
+                    "last": (store_module.iso_of_ms(messages["max_ts"])
                              if messages["max_ts"] else None),
                 },
                 "tracks": {
@@ -976,7 +976,7 @@ def _handler_class(api):
                                                limit=config.SYNC_MSG_LIMIT)
             meta = api.store.sync_messages_meta(record["call"])
             self._json(200, {"ok": True, "added": added, "count": meta["count"],
-                             "last": (store_module.iso_of(meta["max_ts"])
+                             "last": (store_module.iso_of_ms(meta["max_ts"])
                                       if meta["max_ts"] else None),
                              "server_time": store_module.now_iso()})
 

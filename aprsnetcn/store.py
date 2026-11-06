@@ -123,6 +123,17 @@ def iso_of(epoch):
     return datetime.fromtimestamp(epoch, BEIJING).isoformat(timespec="seconds")
 
 
+def iso_of_ms(stamp):
+    """消息的时间戳是**毫秒**（客户端原样传上来的），落库也按毫秒存。
+
+    显示之前必须除以 1000 —— 直接当秒用会算出公元五万年。
+    """
+    try:
+        return iso_of(int(stamp) // 1000)
+    except (TypeError, ValueError):
+        return None
+
+
 class Store:
     def __init__(self, path):
         self.path = path

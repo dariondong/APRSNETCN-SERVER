@@ -729,6 +729,11 @@ def test_sync():
        [m["mid"] for m in data["messages"]])
     ok("已确认状态被推上去",
        any(m["mid"] == "a2" and m["acked"] for m in data["messages"]))
+    code, data = api_call("/api/v1/sync/messages", "POST", {"items": [
+        {"mid": "a4", "ts": int(time.time() * 1000), "text": "now"},
+    ]}, token=token)
+    ok("消息时间戳按毫秒算，不是公元五万年",
+       code == 200 and str(data.get("last") or "").startswith("20"), data.get("last"))
 
     # ③ 轨迹：按天并集
     code, data = api_call("/api/v1/sync/tracks/2026-11-06", "PUT", {"points": [
@@ -797,7 +802,7 @@ def test_sync():
     # ⑤ 状态
     code, data = api_call("/api/v1/sync/state", token=token)
     ok("状态里有设备与三类数据",
-       data.get("messages", {}).get("count") == 3 and
+       data.get("messages", {}).get("count") == 4 and
        data.get("tracks", {}).get("days") == 1 and
        len(data.get("devices") or []) == 2, data.get("devices"))
 
