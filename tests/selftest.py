@@ -53,6 +53,7 @@ os.environ.update({
 from aprsnetcn import api, aprslib, auth, config, filters, tocalls  # noqa: E402
 from aprsnetcn.hub import Hub  # noqa: E402
 from aprsnetcn.ingest import Ingest  # noqa: E402
+from aprsnetcn.msgcache import MsgCache  # noqa: E402
 from aprsnetcn.main import self_check  # noqa: E402
 from aprsnetcn.store import Store, now_iso  # noqa: E402
 
@@ -729,6 +730,12 @@ def test_sync():
        [m["mid"] for m in data["messages"]])
     ok("已确认状态被推上去",
        any(m["mid"] == "a2" and m["acked"] for m in data["messages"]))
+    ok("消息列表带来源字段", all("src" in m for m in data["messages"]))
+    code, data = api_call("/api/v1/sync/messages?since=0&limit=1", token=token)
+    ok("列表带总条数与下一页标记",
+       data.get("total") == 3 and data.get("more") is True,
+       (data.get("total"), data.get("more")))
+    ok("读的页不再受写的那条上限卡住", data.get("count") == 1, data.get("count"))
     code, data = api_call("/api/v1/sync/messages", "POST", {"items": [
         {"mid": "a4", "ts": int(time.time() * 1000), "text": "now"},
     ]}, token=token)
@@ -835,6 +842,47 @@ def test_sync():
     config.TCP_PORT = TCP_PORT
 
 
+def test_msgcache():
+    """消息缓存：服务器看到的收/发各记一条，ACK 对上，同一条不重复记。"""
+    store = Store(os.path.join(DATA_DIR, "msgcache.db"))
+    store.save_account("BG5MC", account="bg5mc", status="authorized")
+    cache = MsgCache(store)
+    now = time.time()
+    inbound = aprslib.parse(
+        "BG7LZQ-3>APRS,TCPIP*,qAC,T2TEST::BG5MC    :hello from rf{77")
+    parts = aprslib.message_of(inbound)
+    ok("消息报道拆出收件人", parts and parts["to"] == "BG5MC", parts)
+    ok("消息报道拆出编号", parts and parts["pid"] == "77", parts)
+    ok("消息报道拆出正文", parts and parts["text"] == "hello from rf", parts)
+    ok("服务器看到的收到一条记下了", cache.observe(inbound, ts=now) == 1)
+    rows = store.sync_messages("BG5MC")
+    ok("收到的消息进了消息库", len(rows) == 1 and rows[0]["dir"] == "in", rows)
+    ok("正文是报文里那一截", rows and rows[0]["text"] == "hello from rf")
+    ok("来源标成服务器看到", rows and rows[0]["src"] == "aprs", rows and rows[0]["src"])
+    ok("同一条再从另一条链路看到一遍不重复",
+       cache.observe(inbound, ts=now + 5) == 0)
+    ok("重复的那一遍没进库", len(store.sync_messages("BG5MC")) == 1)
+    outbound = aprslib.parse(
+        "BG5MC>APRS,TCPIP*,qAC,T2TEST::BG7LZQ-3 :on my way{88")
+    ok("自己发出去的那条也记一条", cache.observe(outbound, ts=now) == 1)
+    rows = store.sync_messages("BG5MC")
+    ok("发的与收的各一行", sorted(r["dir"] for r in rows) == ["in", "out"],
+       [r["dir"] for r in rows])
+    ack = aprslib.parse("BG7LZQ-3>APRS,TCPIP*,qAC,T2TEST::BG5MC    :ack88")
+    ok("回执对上自己发的那条", cache.observe(ack, ts=now + 1) == 1)
+    rows = store.sync_messages("BG5MC")
+    ok("自己发的那条标成已确认",
+       [r["acked"] for r in rows if r["dir"] == "out"] == [True],
+       [(r["dir"], r["acked"]) for r in rows])
+    stray = aprslib.parse("BG7LZQ-3>APRS::BG9ZZZ   :not ours")
+    ok("名单外的呼号不缓存", cache.observe(stray, ts=now) == 0)
+    store.sync_messages_put("BG5MC", [{"mid": "c1", "ts": int(now * 1000),
+                                       "peer": "BG7LZQ-3", "dir": "in",
+                                       "text": "same words"}])
+    repeat = aprslib.parse("BG7LZQ-3>APRS::BG5MC    :same words")
+    ok("客户端传过的同一条不再记一遍", cache.observe(repeat, ts=now + 3) == 0)
+
+
 def main():
     test_passcode()
     test_parse()
@@ -843,6 +891,7 @@ def main():
     test_ingest()
     test_devices()
     test_sync()
+    test_msgcache()
     print("\n%d 项，过了 %d 项" % (len(PASSED) + len(FAILED), len(PASSED)))
     if FAILED:
         print("没过：" + "、".join(FAILED))

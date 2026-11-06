@@ -14,9 +14,10 @@ from . import aprslib, config
 
 
 class Ingest:
-    def __init__(self, store, hub=None):
+    def __init__(self, store, hub=None, msgcache=None):
         self.store = store
         self.hub = hub
+        self.msgcache = msgcache
         self.running = False
         self.thread = None
         self.sock = None
@@ -131,6 +132,11 @@ class Ingest:
         if self.store.record_position(pkt, via=aprslib.via_of(pkt),
                                       src_call=config.INGEST_LOGIN):
             self.stored += 1
+        if self.msgcache is not None:
+            try:
+                self.msgcache.observe(pkt)                # 上游看到的消息也存一份
+            except Exception:                             # noqa: BLE001
+                pass
         if config.INGEST_FORWARD and self.hub is not None:
             self.hub.broadcast(text, pkt)
 

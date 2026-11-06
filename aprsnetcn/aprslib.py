@@ -213,6 +213,53 @@ def _compressed(pkt, body):
 RF_ALIASES = ("WIDE", "RELAY", "TRACE", "GATE", "SGATE", "RFONLY", "NOGATE")
 
 
+MSG_ID_RE = re.compile(r"\{([0-9A-Za-z]{1,5})_?\s*$")
+
+
+def split_msg_id(body):
+    """正文尾巴上的 `{编号`（或 `{编号_`）：拆出来，剩下的才算正文。"""
+    text = body or ""
+    match = MSG_ID_RE.search(text)
+    if not match:
+        return text.strip(), ""
+    return text[:match.start()].rstrip(), match.group(1)
+
+
+def _pid_of(text):
+    """回执里的编号：`ack123` 后面的 123，有的台站还会再挂一个 `{4`。"""
+    cleaned = (text or "").strip()
+    match = MSG_ID_RE.search(cleaned)
+    if match:
+        cleaned = cleaned[:match.start()].strip()
+    return re.sub(r"[^0-9A-Za-z]", "", cleaned)[:8]
+
+
+def message_of(pkt):
+    """把一条消息报文拆成收件人、正文与编号。
+
+    消息的格式是 `:收件人(9 位):正文`，正文尾巴可以带 `{编号`
+    （`{编号_` 表示不用回 ACK）。`ack123` / `rej123` 是回执，
+    正文里没话，只有被确认的那一条的编号。
+
+    返回 {"to", "text", "kind", "pid"}，kind 是 text / ack / rej；
+    不是消息报文返回 None。
+    """
+    if pkt is None or pkt.type != "m":
+        return None
+    info = pkt.info or ""
+    if len(info) < 11 or info[0] != ":" or info[10] != ":":
+        return None
+    to = info[1:10].strip().upper()
+    if not to or not valid_call(to):
+        return None
+    body = info[11:]
+    head = body[:3].lower()
+    if head in ("ack", "rej"):
+        return {"to": to, "text": "", "kind": head, "pid": _pid_of(body[3:])}
+    text, pid = split_msg_id(body)
+    return {"to": to, "text": text, "kind": "text", "pid": pid}
+
+
 def via_of(pkt):
     """这条报文算走射频还是走网络：看路径里的 q 构造与中继别名。"""
     for entry in pkt.path:

@@ -91,6 +91,8 @@ SCHEMA = (
         text TEXT,
         acked INTEGER NOT NULL DEFAULT 0,
         grp TEXT,
+        pid TEXT,
+        src TEXT,
         PRIMARY KEY (call, mid)
     )""",
     "CREATE INDEX IF NOT EXISTS user_messages_ts ON user_messages(call, ts)",
@@ -155,6 +157,17 @@ class Store:
                    self._db.execute("PRAGMA table_info(positions)").fetchall()}
         if "dst" not in columns:
             self._db.execute("ALTER TABLE positions ADD COLUMN dst TEXT")
+        # 消息表：pid 是报文自己带的 `{编号`，用它把 ACK 对上去；
+        # src 记这条是从哪来的——client 是客户端上传的，aprs 是服务器自己看到的。
+        columns = {row["name"] for row in
+                   self._db.execute("PRAGMA table_info(user_messages)").fetchall()}
+        if "pid" not in columns:
+            self._db.execute("ALTER TABLE user_messages ADD COLUMN pid TEXT")
+        if "src" not in columns:
+            self._db.execute("ALTER TABLE user_messages ADD COLUMN src TEXT")
+        self._db.execute(
+            "CREATE INDEX IF NOT EXISTS user_messages_pid "
+            "ON user_messages(call, dir, pid)")
 
     # ── 账号与名单 ──
     def account(self, call):
@@ -516,6 +529,66 @@ class Store:
         return self.sync_revoke(call, device=device)
 
     # ── 个人数据同步：消息 ──
+    # ── 消息缓存：服务器自己看到的报文也进这个人的消息 ──
+    # 客户端上传的（src=client）与服务器看到的（src=aprs）存在同一张表，
+    # 同一句话两边都见过只留一行。
+    def cache_message(self, call, mid, ts, peer, direction, text, pid="",
+                      limit=0, window=120):
+        """记一行服务器看到的消息报文，返回是不是真写进去了。
+
+        同一台、同一个方向、同一个对象、同一句话，前后 window 秒内算同一条
+        （两台设备、两条链路各看到一遍）：库里已经有了就不再写。
+        limit 是给这个人留多少条，0 表示不裁。
+        """
+        call = (call or "").upper().strip()
+        text = (text or "")[:512]
+        if not call or not mid or not text:
+            return False
+        direction = (direction or "in")[:8]
+        peer = (peer or "")[:24]
+        span = abs(int(window or 0)) * 1000
+        with self._lock:
+            row = self._db.execute(
+                "SELECT mid FROM user_messages WHERE call = ? AND mid = ?",
+                (call, mid)).fetchone()
+            if row is not None:
+                return False
+            twin = self._db.execute(
+                "SELECT mid FROM user_messages WHERE call = ? AND dir = ? "
+                "AND peer = ? AND text = ? AND ts BETWEEN ? AND ? LIMIT 1",
+                (call, direction, peer, text,
+                 int(ts) - span, int(ts) + span)).fetchone()
+            if twin is not None:
+                return False
+            self._db.execute(
+                """INSERT INTO user_messages
+                       (call, mid, ts, peer, dir, text, acked, grp, pid, src)
+                   VALUES (?,?,?,?,?,?,0,'',?,?)""",
+                (call, mid, int(ts), peer, direction, text,
+                 (pid or "")[:8], "aprs"))
+            if limit:
+                self._db.execute(
+                    "DELETE FROM user_messages WHERE call = ? AND mid NOT IN "
+                    "(SELECT mid FROM user_messages WHERE call = ? "
+                    " ORDER BY ts DESC, mid DESC LIMIT ?)",
+                    (call, call, int(limit)))
+            self._db.commit()
+        return True
+
+    def cache_ack(self, call, peer, pid):
+        """对方回了 ACK：把这个呼号发出去的那一条标成已确认。"""
+        call = (call or "").upper().strip()
+        pid = (pid or "").strip()
+        if not call or not pid:
+            return False
+        with self._lock:
+            cursor = self._db.execute(
+                "UPDATE user_messages SET acked = 1 WHERE call = ? AND dir = 'out' "
+                "AND pid = ? AND (peer IS NULL OR peer = '' OR peer = ?)",
+                (call, pid, (peer or "").strip()))
+            self._db.commit()
+        return cursor.rowcount > 0
+
     def sync_messages_put(self, call, items, limit=5000, now=None):
         """并集写：新 mid 插入，已存在的只把 acked 往「已确认」上推。
 
@@ -566,7 +639,8 @@ class Store:
                 (call, int(since), int(limit), int(offset))).fetchall()
         return [{"mid": row["mid"], "ts": row["ts"], "peer": row["peer"] or "",
                  "dir": row["dir"] or "in", "text": row["text"] or "",
-                 "acked": bool(row["acked"]), "grp": row["grp"] or ""}
+                 "acked": bool(row["acked"]), "grp": row["grp"] or "",
+                 "src": row["src"] or "client"}
                 for row in rows]
 
     def sync_messages_meta(self, call):

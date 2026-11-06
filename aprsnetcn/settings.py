@@ -59,6 +59,12 @@ SPECS = (
      "label": "公开接口限流", "kind": "int", "min": 1, "max": 100000, "unit": "次/分",
      "hint": "按来源 IP 数，限的是刷新太勤，不是防人"},
     # ── 外部拉取 ──
+    {"key": "ACN_MSG_CACHE", "attr": "MSG_CACHE", "group": "数据",
+     "label": "消息缓存", "kind": "bool",
+     "hint": "服务器看到的消息也记进名单里那个呼号的消息，客户端同步时能拿回没开机那段"},
+    {"key": "ACN_MSG_CACHE_LIMIT", "attr": "MSG_CACHE_LIMIT", "group": "数据",
+     "label": "每人留多少条", "kind": "int", "min": 0, "max": 200000, "unit": "条",
+     "hint": "0 表示不裁；填了数就只留最新的这么多条"},
     {"key": "ACN_INGEST_ENABLED", "attr": "INGEST_ENABLED", "group": "外部拉取",
      "label": "拉取外部数据", "kind": "bool",
      "hint": "只读地连一台 APRS-IS，把报文补进 24 小时台站；改完立刻重连"},

@@ -97,6 +97,11 @@ SYNC_TRACK_DAYS = _int("ACN_SYNC_TRACK_DAYS", 365)         # 每人留多少天�
 SYNC_TRACK_POINTS = _int("ACN_SYNC_TRACK_POINTS", 60000)   # 单天点数上限
 SYNC_BACKUPS = _int("ACN_SYNC_BACKUPS", 3)                 # 每人留几份备份
 SYNC_BATCH = _int("ACN_SYNC_BATCH", 500)                   # 单次上传/返回的条数上限
+# 消息缓存：服务器自己看到的报文（收进来的、自己发出去的）也存进这个人的消息，
+# 客户端下次同步就把「当时没开机」那段也拿回去了。
+MSG_CACHE = _text("ACN_MSG_CACHE", "1") not in ("0", "false", "no", "off", "")
+MSG_CACHE_LIMIT = _int("ACN_MSG_CACHE_LIMIT", 0)           # 每人留多少条，0 = 不裁
+MSG_CACHE_DEDUPE = _int("ACN_MSG_CACHE_DEDUPE", 120)       # 同一条被两条链路各看到一遍，这么多秒内算一条
 # 公开台站页与它调的那两个接口不验 token，按来源 IP 限流
 PUBLIC_RATE_MINUTE = _int("ACN_PUBLIC_RATE_MINUTE", 60)
 

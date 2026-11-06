@@ -9,6 +9,7 @@ import time
 
 from . import api, auth, config, hub as hub_module, settings as settings_module
 from .ingest import Ingest
+from .msgcache import MsgCache
 from .store import Store
 
 
@@ -65,9 +66,9 @@ def main(argv=None):
     applied = settings_module.load(store)                  # 控制台改过的值盖回 config
     bootstrap(store)
     self_check(store)
-    node = hub_module.Hub(store)
+    node = hub_module.Hub(store, MsgCache(store))
     node.start()
-    feeder = Ingest(store, node)
+    feeder = Ingest(store, node, node.msgcache)
     feeder.start()
     server, api_state = api.make_server(store, node, feeder)
     threading.Thread(target=server.serve_forever, name="api", daemon=True).start()

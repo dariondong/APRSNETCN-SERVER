@@ -172,8 +172,9 @@ class Client:
 class Hub:
     """连接的集合与转发。"""
 
-    def __init__(self, store):
+    def __init__(self, store, msgcache=None):
         self.store = store
+        self.msgcache = msgcache          # 看得到的消息报文也记进每个人的消息里
         self.clients = set()
         self.lock = threading.Lock()
         self.server_sockets = []
@@ -441,6 +442,11 @@ class Hub:
         client.received += 1
         self.packets_in += 1
         self.note("in", text, pkt)
+        if self.msgcache is not None:
+            try:
+                self.msgcache.observe(pkt)                # 消息顺手存一份，失败不影响转发
+            except Exception:                             # noqa: BLE001
+                pass
         via = via_of(pkt)
         self.store.record_position(pkt, via=via, src_call=client.call)
         out = with_q_construct(text, client.call) if config.ADD_Q_CONSTRUCT else text

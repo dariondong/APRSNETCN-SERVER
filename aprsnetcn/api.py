@@ -986,14 +986,18 @@ def _handler_class(api):
                 return
             try:
                 since = int((query.get("since") or ["0"])[0] or 0)
-                limit = max(1, min(config.SYNC_BATCH, 2000,
+                # 读的页比写的大：历史整份拉回来时少翻几趟
+                limit = max(1, min(2000,
                                    int((query.get("limit") or ["500"])[0] or 500)))
                 offset = max(0, int((query.get("offset") or ["0"])[0] or 0))
             except ValueError:
                 return self._json(400, {"error": "bad-params"})
             rows = api.store.sync_messages(record["call"], since=since,
                                            limit=limit, offset=offset)
+            meta = api.store.sync_messages_meta(record["call"])
             self._json(200, {"ok": True, "count": len(rows), "messages": rows,
+                             "total": meta["count"],
+                             "more": bool(rows) and offset + len(rows) < meta["count"],
                              "since": since, "offset": offset, "limit": limit,
                              "server_time": store_module.now_iso()})
 
