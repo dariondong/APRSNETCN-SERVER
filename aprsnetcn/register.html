@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>注册 · APRSNETCN SERVER</title>
+<link rel="stylesheet" href="/assets/admin.css">
+<style>
+  .reg { max-width: 460px; margin: 6vh auto 0; padding: 0 16px 64px; }
+  .reg h1 { font-size: 21px; letter-spacing: .02em; }
+  .reg .lead { color: var(--grey); margin: 8px 0 22px; }
+  .reg label { display: block; margin-bottom: 14px; }
+  .reg label .k { display: block; color: var(--grey); font-size: 12px; margin-bottom: 4px; }
+  .reg input { width: 100%; padding: 8px 9px; }
+  .reg input[name=call] { text-transform: uppercase; }
+  .reg .go { width: 100%; padding: 10px; font-size: 15px; }
+  .reg .msg { min-height: 22px; margin: 12px 0 4px; font-size: 13px; }
+  .reg .msg.bad { color: var(--hot); }
+  .reg .msg.ok { color: var(--ok); }
+  .reg .out { border: 1px solid var(--line); background: var(--paper); padding: 16px 18px; }
+  .reg .out h3 { font-size: 15px; margin-bottom: 12px; }
+  .reg dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; }
+  .reg dt { color: var(--grey); font-size: 12px; }
+  .reg dd { margin: 0; font-family: var(--mono); font-size: 13px; word-break: break-all; }
+  .reg .copy { border: none; padding: 0 2px 0 6px; font-size: 11px; color: var(--grey); }
+  .reg .copy:hover { color: var(--ink); }
+  .reg .how { margin-top: 14px; padding-top: 10px; border-top: 1px dotted var(--line);
+    color: var(--grey); font-size: 12px; }
+  .reg .foot { margin-top: 18px; color: var(--grey); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <span class="brand">APRSNETCN SERVER</span>
+  <span class="sub">自助注册</span>
+</div>
+
+<main class="reg">
+  <h1>开一个账号</h1>
+  <p class="lead">填呼号和口令。注册完就能连服务器，云同步也能用。</p>
+
+  <form id="form" autocomplete="off">
+    <label>
+      <span class="k">呼号</span>
+      <input id="call" name="call" type="text" maxlength="12" autocapitalize="characters"
+             spellcheck="false" placeholder="">
+    </label>
+    <label>
+      <span class="k">口令</span>
+      <input id="pw" name="pw" type="password" autocomplete="new-password">
+      <span class="k" id="pwHint" style="margin-top:4px"></span>
+    </label>
+    <label>
+      <span class="k">口令再填一次</span>
+      <input id="pw2" name="pw2" type="password" autocomplete="new-password">
+    </label>
+    <button class="primary go" id="go" type="submit">注册</button>
+  </form>
+
+  <p class="msg" id="msg" role="status" aria-live="polite"></p>
+
+  <div class="out" id="out" hidden>
+    <h3>注册好了</h3>
+    <dl>
+      <dt>呼号</dt><dd id="rCall"></dd>
+      <dt>账号</dt><dd id="rAccount"></dd>
+      <dt>passcode</dt><dd><span id="rPass"></span><button class="copy" id="copyPass" type="button">复制</button></dd>
+      <dt>服务器</dt><dd id="rHost"></dd>
+      <dt>端口</dt><dd id="rPort"></dd>
+    </dl>
+    <p class="how">服务器和端口照上面填。呼号填这个，passcode 填这个。账号和口令填在鉴权那两格，口令就是你刚才填的。填完直接连，不用再等审核。</p>
+  </div>
+
+  <p class="foot">一个呼号只能注册一次。呼号写自己的，别人注册过就用不了。</p>
+</main>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var info = null;
+
+  function say(text, cls) {
+    var box = $("msg");
+    box.textContent = text || "";
+    box.className = "msg" + (cls ? " " + cls : "");
+  }
+
+  function load() {
+    fetch("/api/v1/register").then(function (r) { return r.json(); }).then(function (data) {
+      info = data;
+      if (!data.open) {
+        $("form").hidden = true;
+        say("这台服务器没开自助注册。", "bad");
+        return;
+      }
+      if (data.full) {
+        $("form").hidden = true;
+        say("这台服务器暂时不再收新账号。", "bad");
+        return;
+      }
+      $("pwHint").textContent = "至少 " + data.password_min + " 位";
+      $("rHost").textContent = location.hostname;
+      $("rPort").textContent = data.tcp_port;
+    }).catch(function () {
+      say("连不上服务器，刷新再试。", "bad");
+    });
+  }
+
+  function done(data) {
+    $("form").hidden = true;
+    $("rCall").textContent = data.call || "";
+    $("rAccount").textContent = data.account || "";
+    $("rPass").textContent = data.passcode;
+    if (data.tcp_port) { $("rPort").textContent = data.tcp_port; }
+    $("out").hidden = false;
+    say("");
+    try { window.scrollTo(0, 0); } catch (error) { /* 老浏览器 */ }
+  }
+
+  function fail(data) {
+    var code = (data && data.error) || "";
+    if (code === "call-taken") { return say("这个呼号已经注册过了。", "bad"); }
+    if (code === "account-taken") { return say("账号名被占了，换一个。", "bad"); }
+    if (code === "weak-password") { return say("口令太短，至少 " + (data.min || 6) + " 位。", "bad"); }
+    if (code === "long-password") { return say("口令太长，最多 128 位。", "bad"); }
+    if (code === "bad-call") { return say("呼号写错了。", "bad"); }
+    if (code === "register-closed") { return say("这台服务器没开自助注册。", "bad"); }
+    if (code === "register-full") { return say("这台服务器暂时不再收新账号。", "bad"); }
+    if (code === "rate-limited") { return say("注册太频繁，过一会儿再试。", "bad"); }
+    return say("注册没成功，稍后再试。", "bad");
+  }
+
+  $("form").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var call = $("call").value.trim().toUpperCase();
+    var pw = $("pw").value;
+    var pw2 = $("pw2").value;
+    var least = (info && info.password_min) || 6;
+    if (!/^[A-Za-z0-9]{1,9}(-[A-Za-z0-9]{1,2})?$/.test(call)) {
+      return say("呼号只写字母和数字。", "bad");
+    }
+    if (pw.length < least) { return say("口令至少 " + least + " 位。", "bad"); }
+    if (pw !== pw2) { return say("两次口令不一样。", "bad"); }
+    $("go").disabled = true;
+    say("正在注册…");
+    fetch("/api/v1/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ call: call, password: pw })
+    }).then(function (r) {
+      return r.json().then(function (data) { return { code: r.status, data: data }; });
+    }).then(function (res) {
+      $("go").disabled = false;
+      if (res.code === 201 && res.data && res.data.ok) { return done(res.data); }
+      return fail(res.data);
+    }).catch(function () {
+      $("go").disabled = false;
+      say("连不上服务器，稍后再试。", "bad");
+    });
+  });
+
+  $("copyPass").addEventListener("click", function () {
+    var text = $("rPass").textContent;
+    var button = this;
+    function flash() {
+      button.textContent = "已复制";
+      setTimeout(function () { button.textContent = "复制"; }, 1600);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(flash, function () { flash(); });
+      return;
+    }
+    var area = document.createElement("textarea");
+    area.value = text;
+    document.body.appendChild(area);
+    area.select();
+    try { document.execCommand("copy"); } catch (error) { /* 老浏览器 */ }
+    document.body.removeChild(area);
+    flash();
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

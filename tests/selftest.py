@@ -175,6 +175,16 @@ def api_call(path, method="GET", body=None, token="", admin=""):
         return error.code, json.loads(error.read().decode() or "{}")
 
 
+def api_text(path):
+    """取一页 HTML，不解 JSON。"""
+    url = "http://127.0.0.1:%d%s" % (HTTP_PORT, path)
+    try:
+        with urllib.request.urlopen(url, timeout=6) as response:
+            return response.status, response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as error:
+        return error.code, error.read().decode("utf-8", "replace")
+
+
 def test_end_to_end():
     node = Node()
     store = node.store
@@ -904,6 +914,9 @@ def test_register():
        (code, data))
     code, info = api_call("/api/v1/register")
     ok("注册信息说没开", code == 200 and info.get("open") is False, info.get("open"))
+    code, page = api_text("/register")
+    ok("注册页关着也发得出来", code == 200 and "开一个账号" in page, code)
+    ok("注册页自己读接口判开没开", "/api/v1/register" in page and "password_min" in page)
 
     # ② 开着：口令、呼号、账号名逐条挡
     config.REGISTER_ENABLED = True

@@ -288,6 +288,8 @@ def _handler_class(api):
                     return self._openapi()
                 if path == "/stations":
                     return self._stations_page()
+                if path == "/register":
+                    return self._register_page()
                 if path == "/assets/coast.json":
                     return self._asset("coast.json", "application/json; charset=utf-8")
                 if path == "/assets/admin.css":
@@ -423,6 +425,10 @@ def _handler_class(api):
                     return self._html(200, handle.read())
             except OSError:
                 return self._json(404, {"error": "page-missing"})
+
+        def _register_page(self):
+            """自助注册页。注册关着也照发，页面自己会说没开。"""
+            return self._console_asset("register.html", "text/html; charset=utf-8")
 
         def _asset(self, name, content_type):
             path = os.path.join(os.path.dirname(__file__), name)
