@@ -190,6 +190,41 @@ class Store:
                 "SELECT * FROM accounts ORDER BY status, call").fetchall()
         return [dict(row) for row in rows]
 
+    def account_count(self):
+        with self._lock:
+            row = self._db.execute("SELECT COUNT(*) AS n FROM accounts").fetchone()
+        return int(row["n"] or 0)
+
+    def create_account(self, call, account=None, pass_hash="", status="authorized",
+                       note=None):
+        """自助注册用：呼号与账号名都还空着才插，插进去立刻生效。
+
+        查重和插入在同一把锁里做完，两个人同时注册同一个呼号只会成一个。
+        返回 (记录, "") 或 (None, 原因)。
+        """
+        call = (call or "").upper().strip()
+        account = (account or "").strip().lower()
+        if not call:
+            return None, "bad-call"
+        with self._lock:
+            if self._db.execute("SELECT call FROM accounts WHERE call = ?",
+                                (call,)).fetchone():
+                return None, "call-taken"
+            if account and self._db.execute(
+                    "SELECT call FROM accounts WHERE lower(account) = ?",
+                    (account,)).fetchone():
+                return None, "account-taken"
+            self._db.execute(
+                """INSERT INTO accounts (call, account, pass_hash, status, valid_from,
+                       valid_to, note, version, updated)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (call, account, pass_hash or "", status, None, None, note, 1,
+                 now_iso()))
+            self._db.commit()
+            row = self._db.execute("SELECT * FROM accounts WHERE call = ?",
+                                   (call,)).fetchone()
+        return (dict(row) if row else None), ""
+
     def save_account(self, call, account=None, pass_hash=None, status="pending",
                      valid_from=None, valid_to=None, note=None, bump_version=True):
         call = (call or "").upper().strip()

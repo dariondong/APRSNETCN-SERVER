@@ -41,6 +41,12 @@ SPECS = (
     {"key": "ACN_ADD_Q_CONSTRUCT", "attr": "ADD_Q_CONSTRUCT", "group": "接入",
      "label": "补 q 构造", "kind": "bool",
      "hint": "客户端报文转发时补上 qAC,登录呼号，与 APRS-IS 的行为一致"},
+    {"key": "ACN_REGISTER_ENABLED", "attr": "REGISTER_ENABLED", "group": "接入",
+     "label": "自助注册", "kind": "bool",
+     "hint": "打开后 POST /api/v1/register 就能自己开账号，注册完直接能连"},
+    {"key": "ACN_REGISTER_IP_HOUR", "attr": "REGISTER_IP_HOUR", "group": "接入",
+     "label": "注册限流", "kind": "int", "min": 1, "max": 1000, "unit": "次/时",
+     "hint": "同一个 IP 一小时最多注册几次；总人数上限在 env 里设 ACN_REGISTER_MAX，0 不限"},
     # ── 数据 ──
     {"key": "ACN_RETENTION_HOURS", "attr": "RETENTION_HOURS", "group": "数据",
      "label": "台站保留", "kind": "int", "min": 1, "max": 720, "unit": "小时"},

@@ -88,6 +88,14 @@ API_RATE_MINUTE = _int("ACN_API_RATE_MINUTE", 120)  # 每 token 每分钟
 # 要对外服务得在 env 里写 ACN_PUBLIC_API=1。带 token 的 /api/v1/stations 不受影响。
 PUBLIC_API = _text("ACN_PUBLIC_API", "0") not in ("0", "false", "no", "off", "")
 
+# ── 自助注册 ──
+# 打开后任何人 POST /api/v1/register 就能给自己开一个账号，注册完立刻能连、能换同步令牌。
+# 默认关：按名单管人的那台不该对外开注册，开着的实例在 env 里写 ACN_REGISTER_ENABLED=1。
+REGISTER_ENABLED = _text("ACN_REGISTER_ENABLED", "0") not in ("0", "false", "no", "off", "")
+REGISTER_MAX = _int("ACN_REGISTER_MAX", 0)          # 一共收多少个账号，0 = 不限
+REGISTER_IP_HOUR = _int("ACN_REGISTER_IP_HOUR", 5)  # 同一个 IP 一小时内最多注册几次
+REGISTER_PW_MIN = _int("ACN_REGISTER_PW_MIN", 6)    # 口令最短几位
+
 # ── 个人数据同步（消息 / 备份 / 历史轨迹）──
 # 令牌是长期的：同步要在几个星期不打开的情况下仍然能用，口令只登录一次。
 SYNC_ENABLED = _text("ACN_SYNC_ENABLED", "1") not in ("0", "false", "no", "off", "")

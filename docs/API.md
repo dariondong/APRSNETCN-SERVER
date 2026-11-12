@@ -205,6 +205,42 @@ POST   /api/v1/sync/logout              只作废当前这个令牌
 - 同步接口跟其它带 token 的接口共用每分钟 `ACN_API_RATE_MINUTE`（默认 120）的限额。
 - 整台关掉：`ACN_SYNC_ENABLED=0`，所有 `/api/v1/sync/*` 回 `403 sync-disabled`。
 
+## 自助注册
+
+有的服务器对外开注册：自己开一个账号，注册完就能连、能换 token。开没开先问一句。
+
+```bash
+curl -s http://8.138.199.11:8898/api/v1/register
+```
+
+```json
+{"ok": true, "open": true, "full": false, "accounts": 12, "max": 0,
+ "password_min": 6, "server": "APRSNETCN-OPEN", "tcp_port": 24580}
+```
+
+注册：
+
+```bash
+curl -s -X POST http://8.138.199.11:8898/api/v1/register \
+  -H 'Content-Type: application/json' \
+  -d '{"call":"BG7XXX","password":"……"}'
+```
+
+```json
+{"ok": true, "call": "BG7XXX", "account": "bg7xxx", "passcode": 19888,
+ "version": 13, "server": "APRSNETCN-OPEN", "http": "http://8.138.199.11:8898",
+ "tcp_port": 24580}
+```
+
+- `call` 写主呼号，带 SSID 也只记主呼号。
+- `account` 不写就取呼号小写。写了要 3 到 32 位小写字母、数字、`_`、`.`、`-`。
+- `password` 至少 `password_min` 位（默认 6），最多 128 位。
+- 注册即授权。登录时带 `auth <账号> <口令>`，没带时按 passcode 放行（`auth_mode` 为 `optional`）。
+- 一个 IP 一小时最多注册 `ACN_REGISTER_IP_HOUR` 次（默认 5），没注册成的那几次也算。
+- 总人数上限是 `ACN_REGISTER_MAX`，0 表示不限。
+- 呼号已经在名单里回 `409 call-taken`，账号名被占了回 `409 account-taken`。
+- 没开注册的服务器回 `403 register-closed`。
+
 ## 台站页与公开接口
 
 ```
@@ -291,6 +327,9 @@ env 只给启动时的默认值。控制台「设置」页改的值存进库（`
 | 状态码 | `error` | 含义 |
 | --- | --- | --- |
 | 400 | `bad-bbox` / `bad-since` / `bad-limit` / `bad-before` | 参数写错 |
+| 400 | `bad-call` / `weak-password` / `long-password` / `bad-account` | 注册时呼号、口令或账号名不合格 |
+| 409 | `call-taken` / `account-taken` | 这个呼号或账号名已经有人注册了 |
+| 403 | `register-closed` / `register-full` | 这台服务器没开注册，或人数已经满了 |
 | 400 | `bad-items` / `bad-points` / `bad-day` / `bad-json` / `empty-body` | 同步接口的请求体写错，或轨迹日期不是真日期 |
 | 401 | `unauthorized` | 没带 token 或已过期 |
 | 401 | `bad-credentials` | 账号或密码不对 |

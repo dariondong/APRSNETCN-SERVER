@@ -12,9 +12,9 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import (__version__, auth, config, filters, hub as hub_module,
-               settings as settings_module, store as store_module,
-               tocalls as tocalls_module)
+from . import (__version__, aprslib, auth, config, filters,
+               hub as hub_module, settings as settings_module,
+               store as store_module, tocalls as tocalls_module)
 
 BEIJING = store_module.BEIJING
 
@@ -30,6 +30,7 @@ class Api:
         self.lock = threading.Lock()
         self.rate = {}
         self.public_rate = {}
+        self.register_rate = {}
         self.admin_denied = 0
 
     def enforce_whitelist(self, reason="whitelist-changed"):
@@ -91,6 +92,21 @@ class Api:
             while window and now - window[0] > 60:
                 window.pop(0)
             return len(window) <= config.PUBLIC_RATE_MINUTE
+
+    def register_ok(self, address):
+        """自助注册按来源 IP 限流：一小时内同一个 IP 最多那几次。
+
+        失败的那几次也算：不然猜呼号、试口令、刷账号都绕得过。
+        """
+        now = time.time()
+        with self.lock:
+            if len(self.register_rate) > 2000:
+                self.register_rate.clear()
+            window = self.register_rate.setdefault(address or "-", [])
+            window.append(now)
+            while window and now - window[0] > 3600:
+                window.pop(0)
+            return len(window) <= config.REGISTER_IP_HOUR
 
     # ── 个人数据同步的令牌 ──
     def sync_issue(self, call, device):
@@ -266,6 +282,8 @@ def _handler_class(api):
                     return self._health()
                 if path == "/api/v1/version":
                     return self._version()
+                if path == "/api/v1/register":
+                    return self._register_info()
                 if path == "/api/v1/openapi.json":
                     return self._openapi()
                 if path == "/stations":
@@ -330,6 +348,8 @@ def _handler_class(api):
             try:
                 if path == "/api/v1/login":
                     return self._login()
+                if path == "/api/v1/register":
+                    return self._register()
                 if path == "/api/v1/sync/login":
                     return self._sync_login()
                 if path == "/api/v1/sync/logout":
@@ -466,7 +486,75 @@ def _handler_class(api):
                 "default_filter": "all",
                 "login_extensions": ["vers", "auth", "filter"],
                 "public_api": config.PUBLIC_API,
+                "register": config.REGISTER_ENABLED,
                 "filters": list(filters.KNOWN),
+            })
+
+        # ── 自助注册 ──
+        # 不限人数的那台靠这两条开账号：注册即授权，呼号就是名单里的那条。
+        def _register_info(self):
+            """开不开注册、已经收了多少、口令最少几位。"""
+            count = api.store.account_count()
+            self._json(200, {
+                "ok": True,
+                "open": config.REGISTER_ENABLED,
+                "full": bool(config.REGISTER_MAX and count >= config.REGISTER_MAX),
+                "accounts": count,
+                "max": config.REGISTER_MAX,
+                "password_min": config.REGISTER_PW_MIN,
+                "server": config.SERVER_ID,
+                "proto": __version__,
+                "tcp_port": config.TCP_PORT,
+                "auth_mode": config.AUTH_MODE,
+            })
+
+        def _register(self):
+            if not config.REGISTER_ENABLED:
+                return self._json(403, {"error": "register-closed"})
+            address = self.client_address[0]
+            if not api.register_ok(address):
+                api.store.audit("register-limited", {"address": address})
+                return self._json(429, {"error": "rate-limited",
+                                        "per_hour": config.REGISTER_IP_HOUR})
+            body = self._body()
+            root = (body.get("call") or "").split("-")[0].upper().strip()
+            if not aprslib.valid_call(root):
+                return self._json(400, {"error": "bad-call"})
+            password = body.get("password")
+            if not isinstance(password, str) or len(password) < config.REGISTER_PW_MIN:
+                return self._json(400, {"error": "weak-password",
+                                        "min": config.REGISTER_PW_MIN})
+            if len(password) > 128:
+                return self._json(400, {"error": "long-password", "max": 128})
+            account = (body.get("account") or root).strip().lower()
+            if not re.match(r"^[a-z0-9][a-z0-9_.-]{2,31}$", account):
+                return self._json(400, {"error": "bad-account"})
+            if config.REGISTER_MAX and api.store.account_count() >= config.REGISTER_MAX:
+                return self._json(403, {"error": "register-full",
+                                        "max": config.REGISTER_MAX})
+            record, error = api.store.create_account(
+                root, account=account,
+                pass_hash=auth.hash_password(password),
+                status="authorized",
+                note="self-register %s" % address)
+            if not record:
+                api.store.audit("register-rejected", {"call": root, "account": account,
+                                                      "reason": error,
+                                                      "address": address})
+                return self._json(409, {"error": error or "taken"})
+            version = api.store.bump_whitelist_version()
+            api.store.set_meta("whitelist_synced_at", store_module.now_iso())
+            api.store.audit("register", {"call": root, "account": account,
+                                          "address": address, "version": version})
+            self._json(201, {
+                "ok": True,
+                "call": root,
+                "account": account,
+                "passcode": aprslib.passcode(root),
+                "version": version,
+                "server": config.SERVER_ID,
+                "http": config.PUBLIC_URL,
+                "tcp_port": config.TCP_PORT,
             })
 
         def _openapi(self):

@@ -273,6 +273,30 @@
             "example": "unauthorized"
           }
         }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": [
+          "call",
+          "password"
+        ],
+        "properties": {
+          "call": {
+            "type": "string",
+            "example": "BG7XXX",
+            "description": "主呼号，带 SSID 也只记主呼号"
+          },
+          "account": {
+            "type": "string",
+            "example": "bg7xxx",
+            "description": "不写就取呼号小写"
+          },
+          "password": {
+            "type": "string",
+            "example": "……",
+            "description": "至少 password_min 位（默认 6）"
+          }
+        }
       }
     }
   },
@@ -309,6 +333,53 @@
           },
           "403": {
             "description": "名单里没有或授权失效"
+          }
+        }
+      }
+    },
+    "/api/v1/register": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "这台服务器开不开自助注册",
+        "responses": {
+          "200": {
+            "description": "open / full / accounts / password_min / tcp_port"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "自己开一个账号，注册完立刻能用",
+        "description": "注册即授权。呼号取主呼号，账号名默认呼号小写。一个 IP 每小时限流。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "注册成功，回呼号、账号名、passcode 与名单版本"
+          },
+          "400": {
+            "description": "bad-call / weak-password / long-password / bad-account"
+          },
+          "403": {
+            "description": "register-closed / register-full"
+          },
+          "409": {
+            "description": "call-taken / account-taken"
+          },
+          "429": {
+            "description": "rate-limited：这个 IP 一小时注册太多次"
           }
         }
       }
@@ -713,7 +784,7 @@
           "sync"
         ],
         "summary": "增量拉消息（since=0 就是整份）",
-  "description": "这个人云上的消息，按时间升序。带 total（一共多少条）与 more（后面还有没有一页），单页最多 2000 条。每条带 src：client 是客户端自己传的，aprs 是服务器看着报文记下的。",
+        "description": "这个人云上的消息，按时间升序。带 total（一共多少条）与 more（后面还有没有一页），单页最多 2000 条。每条带 src：client 是客户端自己传的，aprs 是服务器看着报文记下的。",
         "security": [
           {
             "bearer": []

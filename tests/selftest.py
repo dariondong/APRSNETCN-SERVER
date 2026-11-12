@@ -151,6 +151,14 @@ def connect(node, login_line, needle="logresp"):
     return sock, read_until(sock, needle, 3.0)
 
 
+def connect_on(port, login_line, needle="logresp"):
+    """指定端口连一次：前面几轮的实例还占着原来的端口，注册那一轮自己挑一个。"""
+    sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+    read_until(sock, "aprsnetcn", 3.0)
+    sock.sendall((login_line + "\r\n").encode())
+    return sock, read_until(sock, needle, 3.0)
+
+
 def api_call(path, method="GET", body=None, token="", admin=""):
     url = "http://127.0.0.1:%d%s" % (HTTP_PORT, path)
     data = json.dumps(body).encode() if body is not None else None
@@ -883,6 +891,107 @@ def test_msgcache():
     ok("客户端传过的同一条不再记一遍", cache.observe(repeat, ts=now + 3) == 0)
 
 
+def test_register():
+    """自助注册：默认关，开着就能自己开账号，注册完立刻能连、能换令牌。"""
+    config.TCP_PORT = free_port()
+    node = Node()
+    store = node.store
+    # ① 没开：接口自己说不开，注册被拒
+    config.REGISTER_ENABLED = False
+    code, data = api_call("/api/v1/register", "POST",
+                          {"call": "BG9REG", "password": "regpw123"})
+    ok("注册默认关着", code == 403 and data.get("error") == "register-closed",
+       (code, data))
+    code, info = api_call("/api/v1/register")
+    ok("注册信息说没开", code == 200 and info.get("open") is False, info.get("open"))
+
+    # ② 开着：口令、呼号、账号名逐条挡
+    config.REGISTER_ENABLED = True
+    config.REGISTER_PW_MIN = 6
+    config.REGISTER_MAX = 0
+    config.REGISTER_IP_HOUR = 50
+    code, data = api_call("/api/v1/register", "POST",
+                          {"call": "BG9REG", "password": "123"})
+    ok("口令太短不收", code == 400 and data.get("error") == "weak-password",
+       (code, data))
+    code, data = api_call("/api/v1/register", "POST",
+                          {"call": "呼号", "password": "regpw123"})
+    ok("呼号不合法不收", code == 400 and data.get("error") == "bad-call", (code, data))
+
+    # ③ 正常注册：SSID 归到主呼号，账号名默认跟呼号走
+    code, data = api_call("/api/v1/register", "POST",
+                          {"call": "BG9REG-7", "password": "regpw123"})
+    ok("注册通过", code == 201 and data.get("call") == "BG9REG", (code, data))
+    ok("注册回报 passcode",
+       data.get("passcode") == aprslib.passcode("BG9REG"), data.get("passcode"))
+    ok("账号名默认取呼号小写", data.get("account") == "bg9reg", data.get("account"))
+    ok("注册就把名单版本推上去", int(data.get("version") or 0) >= 1,
+       data.get("version"))
+    saved = store.account("BG9REG") or {}
+    ok("注册完就是已授权", saved.get("status") == "authorized", saved.get("status"))
+
+    # ④ 同一个呼号、同一个账号名都不能重
+    code, data = api_call("/api/v1/register", "POST",
+                          {"call": "BG9REG", "password": "another1"})
+    ok("同一个呼号不能注册两次", code == 409 and data.get("error") == "call-taken",
+       (code, data))
+    code, data = api_call("/api/v1/register", "POST",
+                          {"call": "BG9REH", "account": "bg9reg",
+                           "password": "another1"})
+    ok("账号名重了不收", code == 409 and data.get("error") == "account-taken",
+       (code, data))
+
+    # ⑤ 注册完马上能连：口令对就 verified，口令错就登不上
+    port = config.TCP_PORT
+    sock, reply = connect_on(port, "user BG9REG pass %d vers APRSLocus 2.1.43 "
+                                   "auth bg9reg regpw123" % aprslib.passcode("BG9REG"))
+    ok("刚注册的账号能登录", "logresp BG9REG verified" in reply, reply.strip())
+    sock.close()
+    sock, reply = connect_on(port, "user BG9REG-7 pass %d vers APRSLocus 2.1.43 "
+                                   "auth bg9reg wrongpw" % aprslib.passcode("BG9REG"),
+                             needle="not authorized")
+    ok("口令错的登不上", "auth-failed" in reply, reply.strip())
+    sock.close()
+
+    # ⑥ 注册完就能拿同步令牌（云同步那条路）
+    code, data = api_call("/api/v1/sync/login", "POST",
+                          {"account": "bg9reg", "password": "regpw123",
+                           "device": {"id": "reg-dev", "platform": "android"}})
+    ok("刚注册的账号能换同步令牌", code == 200 and bool(data.get("token")),
+       (code, data.get("token")))
+
+    # ⑦ 限流：同一个 IP 一小时只给那么多次，失败的那几次也算
+    node.api.register_rate.clear()
+    config.REGISTER_IP_HOUR = 2
+    first, _ = api_call("/api/v1/register", "POST",
+                        {"call": "BG9REA", "password": "regpw123"})
+    second, _ = api_call("/api/v1/register", "POST",
+                         {"call": "BG9REB", "password": "regpw123"})
+    third, data = api_call("/api/v1/register", "POST",
+                           {"call": "BG9REC", "password": "regpw123"})
+    ok("注册按 IP 限流", (first, second, third) == (201, 201, 429)
+       and data.get("error") == "rate-limited", (first, second, third))
+
+    # ⑧ 总人数封顶
+    config.REGISTER_IP_HOUR = 50
+    config.REGISTER_MAX = store.account_count()
+    code, data = api_call("/api/v1/register", "POST",
+                          {"call": "BG9RED", "password": "regpw123"})
+    ok("人数封顶后不再收", code == 403 and data.get("error") == "register-full",
+       (code, data))
+
+    # ⑨ 关掉：接口说不开，已经注册的照旧能用
+    config.REGISTER_MAX = 0
+    config.REGISTER_ENABLED = False
+    code, info = api_call("/api/v1/register")
+    ok("关掉后报 open=false", code == 200 and info.get("open") is False, info.get("open"))
+    code, data = api_call("/api/v1/sync/login", "POST",
+                          {"account": "bg9reg", "password": "regpw123",
+                           "device": {"id": "reg-dev"}})
+    ok("关掉注册不影响已注册的账号", code == 200 and bool(data.get("token")), code)
+    node.stop()
+
+
 def main():
     test_passcode()
     test_parse()
@@ -892,6 +1001,7 @@ def main():
     test_devices()
     test_sync()
     test_msgcache()
+    test_register()
     print("\n%d 项，过了 %d 项" % (len(PASSED) + len(FAILED), len(PASSED)))
     if FAILED:
         print("没过：" + "、".join(FAILED))
