@@ -101,7 +101,7 @@ REGISTER_PW_MIN = _int("ACN_REGISTER_PW_MIN", 6)    # 口令最短几位
 SYNC_ENABLED = _text("ACN_SYNC_ENABLED", "1") not in ("0", "false", "no", "off", "")
 SYNC_TOKEN_TTL = _int("ACN_SYNC_TOKEN_TTL", 90 * 86400)
 SYNC_MSG_LIMIT = _int("ACN_SYNC_MSG_LIMIT", 5000)          # 每人留多少条消息
-SYNC_TRACK_DAYS = _int("ACN_SYNC_TRACK_DAYS", 365)         # 每人留多少天轨迹
+SYNC_TRACK_DAYS = _int("ACN_SYNC_TRACK_DAYS", 0)           # 每人留多少天轨迹，0 = 全留
 SYNC_TRACK_POINTS = _int("ACN_SYNC_TRACK_POINTS", 60000)   # 单天点数上限
 SYNC_BACKUPS = _int("ACN_SYNC_BACKUPS", 3)                 # 每人留几份备份
 SYNC_BATCH = _int("ACN_SYNC_BATCH", 500)                   # 单次上传/返回的条数上限

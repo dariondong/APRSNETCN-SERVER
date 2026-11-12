@@ -805,6 +805,19 @@ def test_sync():
     ok("指定设备只读那一台", [point["t"] for point in data["points"]] == [301, 400],
        [point["t"] for point in data["points"]])
 
+    # ③c 保留天数：默认 0 = 全留，给了天数才裁
+    store.save_account("BG5PRN", account="bg5prn", status="authorized")
+    for day in ("2026-01-05", "2026-01-06", "2026-01-07"):
+        store.sync_track_put("BG5PRN", day, [{"t": 1, "lat": 1.0, "lng": 1.0}])
+    ok("轨迹默认一天都不裁",
+       store.sync_track_prune("BG5PRN", keep_days=0) == 0 and
+       len(store.sync_track_days("BG5PRN")) == 3,
+       store.sync_track_days("BG5PRN"))
+    ok("给了保留天数才按天数裁",
+       store.sync_track_prune("BG5PRN", keep_days=1) == 2 and
+       [row["day"] for row in store.sync_track_days("BG5PRN")] == ["2026-01-07"],
+       store.sync_track_days("BG5PRN"))
+
     # ④ 备份：整份原样，最多留三份
     doc = {"schema": 3, "appVersion": "2.1.41",
            "groups": {"settings": {"myCall": "BG5SYN"}}}

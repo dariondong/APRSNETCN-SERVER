@@ -774,7 +774,11 @@ class Store:
             self._db.commit()
         return cursor.rowcount
 
-    def sync_track_prune(self, call, keep_days=365):
+    def sync_track_prune(self, call, keep_days=0):
+        """裁掉旧的天数。`keep_days <= 0` 表示全留 —— 轨迹是用户自己的记录，
+        默认一天都不该丢（以前的 365 天上限已经去掉）。"""
+        if int(keep_days) <= 0:
+            return 0
         with self._lock:
             cursor = self._db.execute(
                 "DELETE FROM user_tracks WHERE call = ? AND day NOT IN "

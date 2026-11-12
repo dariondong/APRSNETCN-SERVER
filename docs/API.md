@@ -176,7 +176,8 @@ DELETE /api/v1/sync/tracks/{day}[?device=…]   删那一天（或那一台设�
 读回时默认把这一天所有设备的点合成一条线：按时间排，时间差 3 秒内、距离 50 米以内的两个点
 算同一个点，只留一条（两台手机同时记录同一趟路就是这个情形）。想只要某一台的就带 `device=`。
 
-每人保留 `ACN_SYNC_TRACK_DAYS`（默认 365）天，单天不超过 `ACN_SYNC_TRACK_POINTS`（默认 60000）点。
+轨迹默认**全部保留**（`ACN_SYNC_TRACK_DAYS` = 0）。把它设成天数才按最新的那些天裁旧，
+单天不超过 `ACN_SYNC_TRACK_POINTS`（默认 60000）点。
 
 ### 云端备份
 
